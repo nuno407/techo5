@@ -29,9 +29,8 @@ const (
 	// well inside that while the stream is open.
 	streamFor = 5 * time.Second
 
-	// streamEvery paces the stream: the API link also carries voice, and the receiver is a
-	// browser thumbnail, not a monitor.
-	streamEvery = 500 * time.Millisecond
+	// Leave bandwidth for voice while keeping the live view responsive.
+	streamEvery = 200 * time.Millisecond
 )
 
 // key is the entity key, the library's FNV-1 of the object id.
@@ -141,6 +140,11 @@ func (f *Feature) pump(c *esphome.Conn) {
 	defer release()
 	frames := make(chan *camera.Frame, 1)
 	cancel := camera.Get().Frames.Listen(func(fr *camera.Frame) {
+		// Replace a queued frame so a slow sender always resumes with the latest image.
+		select {
+		case <-frames:
+		default:
+		}
 		select {
 		case frames <- fr:
 		default:

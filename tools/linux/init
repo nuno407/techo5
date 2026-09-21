@@ -52,7 +52,11 @@ $BB mount -t tmpfs tmpfs /tmp
 $BB mdev -s
 $BB mknod -m 600 /dev/mmcblk0p8 b 179 8 2>/dev/null
 [ -e /dev/fb0 ] && $BB ln -sf /dev/fb0 /dev/graphics/fb0
-echo 7 4 1 7 > /proc/sys/kernel/printk
+if [ -f /etc/techo5/kernel-release ]; then
+	echo 3 4 1 3 > /proc/sys/kernel/printk
+else
+	echo 7 4 1 7 > /proc/sys/kernel/printk
+fi
 crumb "dev populated: $($BB ls /dev | $BB wc -l) nodes, fb0=$([ -e /dev/fb0 ] && echo yes || echo no)"
 
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
@@ -100,6 +104,11 @@ snapshot() {
 boot_slot() {
 	slot=$1
 	root=/store/slots/$slot
+	if [ -f /etc/techo5/kernel-release ] &&
+	   [ ! -f "$root/lib/modules/$(uname -r)/extra/mt76x8_wlan.ko" ]; then
+		crumb "slot $slot has no matching kernel modules; staying in rescue"
+		return 1
+	fi
 	[ -x $root/sbin/init ] || [ -L $root/sbin/init ] || { crumb "slot $slot has no /sbin/init"; return 1; }
 	mount --bind $root /newroot || { crumb "bind mount of slot $slot failed"; return 1; }
 	mkdir -p /run/techo5
