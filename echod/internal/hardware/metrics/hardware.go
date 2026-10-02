@@ -6,9 +6,12 @@
 package metrics
 
 import (
+	"context"
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/HuskerMinion/techo5/echod/internal/lib/wifi"
 )
 
 // Paths are relative to a root so a test can point them at a directory of fixtures rather than at the
@@ -43,6 +46,20 @@ func (r Reader) Temperatures() map[string]float64 {
 			continue
 		}
 		out[name] = milli / 1000
+	}
+	if _, exists := out["mtktscpu"]; !exists {
+		if temp, ok := out["cpu-thermal"]; ok {
+			out["mtktscpu"] = temp
+		}
+	}
+	if _, exists := out["mtktswmt"]; !exists {
+		if raw, err := text(r.path("proc/net/wlan/get_temperature")); err == nil {
+			if key, value, ok := strings.Cut(raw, "="); ok && strings.TrimSpace(key) == "Temperature" {
+				if temp, err := strconv.ParseFloat(strings.TrimSpace(value), 64); err == nil && temp >= -40 && temp <= 150 {
+					out["mtktswmt"] = temp
+				}
+			}
+		}
 	}
 	return out
 }
@@ -93,11 +110,20 @@ func (r Reader) Memory() (available, total Reading) {
 	return available, total
 }
 
+// signalPoll asks the supplicant for the signal. A variable so that a test reading fixtures is not
+// answered by the machine running it.
+var signalPoll = func() (int, bool) { return wifi.Signal(context.Background()) }
+
 // Wifi is what the radio reports: the signal in dBm, and the bytes carried since boot.
 //
-// The kernel keeps the signal as an unsigned byte, so anything above 127 is a negative dBm.
+// The signal comes from the supplicant where there is one. /proc/net/wireless is the older wireless
+// extensions interface, which mainline kernels warn about on every boot that reads it; it is still
+// asked where the supplicant cannot say. The kernel keeps the signal there as an unsigned byte, so
+// anything above 127 is a negative dBm.
 func (r Reader) Wifi() (signal, rx, tx Reading) {
-	if body, err := os.ReadFile(r.path("proc/net/wireless")); err == nil {
+	if dbm, ok := signalPoll(); ok {
+		signal = known(float64(dbm))
+	} else if body, err := os.ReadFile(r.path("proc/net/wireless")); err == nil {
 		for line := range strings.SplitSeq(string(body), "\n") {
 			name, rest, ok := strings.Cut(line, ":")
 			if !ok || strings.TrimSpace(name) != wifiInterface {

@@ -16,6 +16,7 @@ import (
 
 	"github.com/HuskerMinion/techo5/echod/internal/component"
 	"github.com/HuskerMinion/techo5/echod/internal/config"
+	"github.com/HuskerMinion/techo5/echod/internal/layout"
 	"github.com/HuskerMinion/techo5/echod/internal/lib/alsa"
 	"github.com/HuskerMinion/techo5/echod/internal/lib/asp"
 	"github.com/HuskerMinion/techo5/echod/internal/lib/hook"
@@ -75,7 +76,8 @@ type Player struct {
 	mixer *alsa.Mixer
 
 	// hold is DRAMHold, kept open for as long as pb is: see paths_cronos.go.
-	hold *os.File
+	hold     *os.File
+	mainline bool
 
 	// Jack changed: a headphone was physically plugged in or pulled out.
 	OnJack hook.Hook[Output]
@@ -222,22 +224,33 @@ func (p *Player) Name() string { return "speaker" }
 // open takes the playback stream and the mixer. Mixer writes happen in Run: the first one enumerates
 // the card, which takes over a second.
 func (p *Player) open() error {
-	m, err := alsa.OpenMixer(Card)
+	card, device, holdPath := Card, PlaybackDevice, DRAMHold
+	mainline := false
+	if layout.Board == "cronos" {
+		c, d, found, err := alsa.FindPCM("mt8163cronos", "MultiMedia1_Playback", false)
+		if err != nil {
+			return fmt.Errorf("speaker: selecting playback: %w", err)
+		}
+		if found {
+			card, device, holdPath, mainline = c, d, "", true
+		}
+	}
+	m, err := alsa.OpenMixer(card)
 	if err != nil {
 		return fmt.Errorf("speaker: opening mixer: %w", err)
 	}
 
 	// Before the playback device, so its driver sees the AFE in use and takes the DRAM ring.
 	var hold *os.File
-	if DRAMHold != "" {
-		hold, err = os.OpenFile(DRAMHold, os.O_RDWR|syscall.O_NONBLOCK, 0)
+	if holdPath != "" {
+		hold, err = os.OpenFile(holdPath, os.O_RDWR|syscall.O_NONBLOCK, 0)
 		if err != nil {
 			_ = m.Close()
-			return fmt.Errorf("speaker: holding %s: %w", DRAMHold, err)
+			return fmt.Errorf("speaker: holding %s: %w", holdPath, err)
 		}
 	}
 
-	pb, err := alsa.OpenPlayback(Card, PlaybackDevice, alsa.Config{
+	pb, err := alsa.OpenPlayback(card, device, alsa.Config{
 		Channels:   Channels,
 		Rate:       Rate,
 		Format:     alsa.FormatS16_LE,
@@ -255,6 +268,7 @@ func (p *Player) open() error {
 
 	p.devMu.Lock()
 	p.pb, p.mixer, p.hold = pb, m, hold
+	p.mainline = mainline
 	p.devMu.Unlock()
 	return nil
 }
@@ -439,7 +453,7 @@ func (p *Player) Run(ctx context.Context) error {
 	// The order the vendor HAL uses on a route change: route with the amplifier off, let the
 	// codec sit idle, enable the amplifier, then feed.
 	out := p.Output()
-	p.apply(initSequence)
+	p.initializeMixer()
 	p.route()
 
 	select {
@@ -951,7 +965,7 @@ func (p *Player) Volume() float32 { return math.Float32frombits(p.volume.Load())
 // Close mutes the codec, turns the amplifier off and lets the device go. The Player stays usable:
 // Start can take it again, which is how a restart works.
 func (p *Player) Close() error {
-	p.apply(initSequence)
+	p.initializeMixer()
 
 	p.devMu.Lock()
 	pb, mixer, hold := p.pb, p.mixer, p.hold
@@ -1026,4 +1040,14 @@ func (b *Bed) Drain() {
 	b.p.mu.Lock()
 	b.p.bed = nil
 	b.p.mu.Unlock()
+}
+
+// initializeMixer keeps vendor amplifier controls off the mainline card.
+func (p *Player) initializeMixer() {
+	if p.mainline {
+		// TAS5805M index 110 is unity; the existing software volume curve controls loudness.
+		p.apply([]kctl{{name: "Master Playback Volume", level: 110}})
+		return
+	}
+	p.apply(initSequence)
 }

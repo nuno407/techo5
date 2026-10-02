@@ -135,8 +135,12 @@ var errStopStuck = errors.New("the camera is still shutting down: the last strea
 // point it at something that exists everywhere and exercise the lifecycle off the device.
 var nodes = []string{"/dev/camera-isp", "/dev/kd_camera_hw", "/dev/ion", "/proc/m4u"}
 
-// Available reports whether this device has the camera nodes.
-func Available() bool {
+// muteSwitch is the privacy latch the camera obeys, failing closed when it cannot be read. It is a
+// variable so that a test off the device can stand in an unmuted one.
+var muteSwitch = privacy.Microphone
+
+// availableVendor reports whether this device has the vendor kernel's camera nodes.
+func availableVendor() bool {
 	for _, p := range nodes {
 		if _, err := os.Stat(p); err != nil {
 			return false
@@ -153,10 +157,16 @@ func (c *Camera) Acquire() (release func(), err error) {
 	if !Available() {
 		return nil, errors.New("no camera on this device")
 	}
-	if m, err := privacy.Microphone(); err == nil {
-		if muted, err := m.Get(); err == nil && muted {
-			return nil, errors.New("privacy is on")
-		}
+	m, err := muteSwitch()
+	if err != nil {
+		return nil, err
+	}
+	muted, err := m.Get()
+	if err != nil {
+		return nil, err
+	}
+	if muted {
+		return nil, errors.New("privacy is on")
 	}
 	if lenscover.Get().Covered() {
 		return nil, errors.New("the lens cover is closed")
@@ -437,12 +447,12 @@ func (c *Camera) startFailed(err error, stopped chan struct{}) (wedged bool) {
 const mutePoll = 300 * time.Millisecond
 
 func isMuted() bool {
-	m, err := privacy.Microphone()
+	m, err := muteSwitch()
 	if err != nil {
-		return false
+		return true
 	}
 	muted, err := m.Get()
-	return err == nil && muted
+	return err != nil || muted
 }
 
 func (c *Camera) emit(f *Frame) {

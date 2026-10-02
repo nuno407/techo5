@@ -659,3 +659,5 @@ func render(raw []byte, t tone) *image.RGBA {
 
 // Full is the frame at full size: the same picture as Image, which is already the sensor's size.
 func (f *Frame) Full() *image.RGBA { return f.Image() }
+
+func Available() bool { return availableVendor() }

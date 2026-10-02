@@ -52,6 +52,31 @@ func Available() bool {
 	return err == nil
 }
 
+// Signal is the joined network's signal in dBm, as the supplicant's SIGNAL_POLL has it from the
+// driver over nl80211. ok is false when there is nothing to say: no supplicant, or not joined.
+func Signal(ctx context.Context) (dbm int, ok bool) {
+	if !Available() {
+		return 0, false
+	}
+	out, err := cli(ctx, "signal_poll")
+	if err != nil {
+		return 0, false
+	}
+	return rssi(out)
+}
+
+// rssi is the RSSI line of a SIGNAL_POLL reply.
+func rssi(out string) (int, bool) {
+	for line := range strings.SplitSeq(out, "\n") {
+		if v, found := strings.CutPrefix(strings.TrimSpace(line), "RSSI="); found {
+			if n, err := strconv.Atoi(v); err == nil {
+				return n, true
+			}
+		}
+	}
+	return 0, false
+}
+
 func cli(ctx context.Context, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()

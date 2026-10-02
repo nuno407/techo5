@@ -140,11 +140,18 @@ func (c *Client) do(method, path string, body any) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("hass: %s %s: %s: %w", method, path, resp.Status, ErrNotFound)
+	}
 	if resp.StatusCode/100 != 2 {
 		return nil, fmt.Errorf("hass: %s %s: %s", method, path, resp.Status)
 	}
 	return out, nil
 }
+
+// ErrNotFound is Home Assistant answering 404: what was asked for does not exist there, which for a
+// whole API (calendars, with no calendar integration set up) is an answer rather than a failure.
+var ErrNotFound = errors.New("not found")
 
 // Day is one day of a forecast.
 type Day struct {

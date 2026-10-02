@@ -1,6 +1,8 @@
 package hass
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 )
@@ -34,5 +36,16 @@ func TestParseEvents(t *testing.T) {
 	}
 	if _, err := parseEvents("calendar.x", []byte(`[{"start":{"date":"soon"}}]`)); err == nil {
 		t.Error("an unreadable date was taken")
+	}
+}
+
+// A Home Assistant with no calendar integration answers /api/calendars with 404: no calendars.
+func TestCalendarsWithoutTheIntegration(t *testing.T) {
+	srv := httptest.NewServer(http.NotFoundHandler())
+	defer srv.Close()
+	c := &Client{http: srv.Client(), acc: access{URL: srv.URL, Token: "token"}}
+	cals, err := c.Calendars()
+	if err != nil || len(cals) != 0 {
+		t.Errorf("Calendars() = %v, %v; want none and no error", cals, err)
 	}
 }

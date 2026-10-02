@@ -35,6 +35,7 @@ WSL_DISTRO=${WSL_DISTRO:-Ubuntu}
 # development only: images are published without it, and a unit mounts its own (etc/techo5/boot.sh).
 BUILD_TAGS=${BUILD_TAGS:-}
 VENDOR_TGZ=${VENDOR_TGZ:-}
+MAINLINE_BUNDLE=${MAINLINE_BUNDLE:-}
 DEVICE_OVERLAY=${DEVICE_OVERLAY:-}
 INSTALL=; REBOOT=; ONDEVICE=; KEEP=
 while [ $# -gt 0 ]; do
@@ -63,7 +64,6 @@ echo "== building for armv7 ($VERSION)"
 export GOOS=linux GOARCH=arm GOARM=7 CGO_ENABLED=0
 pkg=github.com/HuskerMinion/techo5/echod/internal/layout
 commit=$(git -C "$ROOT" rev-parse --short HEAD)
-date=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 if [ -n "${PREBUILT_DAEMON:-}" ]; then
 	# Only what CI built from this release's own tag (spot-vX.Y.Z for BUILD_TAGS=spot): anything else
 	# carries another version, and Home Assistant would offer the update forever after it installed.
@@ -72,7 +72,7 @@ if [ -n "${PREBUILT_DAEMON:-}" ]; then
 		|| { echo "$PREBUILT_DAEMON is not attested as built by CI from tag $tag" >&2; exit 1; }
 	cp "$PREBUILT_DAEMON" "$ROOT/bin/echod-arm"
 else
-	(cd "$ROOT/echod" && "$GO" build -tags "$BUILD_TAGS" -trimpath -ldflags "-s -w -X $pkg.Version=$VERSION -X $pkg.GitCommit=$commit -X $pkg.BuildDate=$date" -o "$ROOT/bin/echod-arm" ./cmd/echod)
+	(cd "$ROOT/echod" && "$GO" build -tags "$BUILD_TAGS" -trimpath -ldflags "-s -w -X $pkg.Version=$VERSION -X $pkg.GitCommit=$commit" -o "$ROOT/bin/echod-arm" ./cmd/echod)
 fi
 # audioprobe lives in the daemon's module so it shares the daemon's ALSA code rather than a copy of it.
 for c in fbprobe audioprobe rebootto btbridge; do
@@ -95,7 +95,8 @@ cp "$ROOT/tools/linux/slotctl" "$ROOT/tools/linux/techo5-lib.sh" "$ROOT/tools/li
 [ "$BUILD_TAGS" = spot ] && sed -i '/^shairport-sync/d' "$STAGE/tools/packages-rootfs.txt"
 cp -r "$ROOT/tools/linux/rootfs/." "$STAGE/overlay/"
 [ -n "$DEVICE_OVERLAY" ] && cp -r "$DEVICE_OVERLAY/." "$STAGE/overlay/"
-cp "$INPUTS"/alpine-minirootfs-*-armv7.tar.gz "$STAGE/inputs/"
+cp "$INPUTS/alpine-minirootfs-3.24.2-armv7.tar.gz" "$STAGE/inputs/"
+[ -n "$MAINLINE_BUNDLE" ] && cp "$MAINLINE_BUNDLE" "$STAGE/inputs/kernel.tar.gz"
 [ -n "$VENDOR_TGZ" ] && cp "$VENDOR_TGZ" "$STAGE/inputs/vendor.tar.gz"
 cp "$INPUTS"/apks312/wpa_supplicant-2.9-*.apk "$INPUTS"/apks312/libssl1.1-*.apk "$INPUTS"/apks312/libcrypto1.1-*.apk "$STAGE/inputs/apks312/"
 # scripts must reach the device with LF endings whatever the checkout did

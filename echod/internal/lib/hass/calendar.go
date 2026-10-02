@@ -2,6 +2,7 @@ package hass
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"slices"
@@ -31,6 +32,10 @@ type Event struct {
 // Calendars lists Home Assistant's calendars.
 func (c *Client) Calendars() ([]Calendar, error) {
 	out, err := c.do("GET", "/api/calendars", nil)
+	if errors.Is(err, ErrNotFound) {
+		// No calendar integration: Home Assistant has no calendars to list.
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}

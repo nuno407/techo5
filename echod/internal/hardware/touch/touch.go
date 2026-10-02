@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/HuskerMinion/techo5/echod/internal/component"
+	"github.com/HuskerMinion/techo5/echod/internal/layout"
 	"github.com/HuskerMinion/techo5/echod/internal/lib/hook"
 	"github.com/HuskerMinion/techo5/echod/internal/lib/input"
 	"github.com/HuskerMinion/techo5/echod/internal/service"
@@ -143,6 +144,9 @@ func (s *Screen) Touched() bool {
 // Start opens the controller's node and reads its coordinate ranges.
 func (s *Screen) Start(context.Context) error {
 	dev, err := input.Find(deviceName)
+	if err != nil && layout.Board == "cronos" {
+		dev, err = input.Find("Goodix Capacitive TouchScreen")
+	}
 	if err != nil {
 		return fmt.Errorf("touch: %w", err)
 	}
@@ -329,6 +333,16 @@ func (s *Screen) track(ctx context.Context, path string, read func() (input.Even
 				continue
 			}
 			s.mu.Lock()
+			// Evdev only sends coordinates that changed. A new contact may reuse
+			// either axis from the slot's previous contact.
+			if p := slots[f.slot]; p != nil {
+				if !f.seenX && p.seenX {
+					f.x, f.seenX = int(p.x), true
+				}
+				if !f.seenY && p.seenY {
+					f.y, f.seenY = int(p.y), true
+				}
+			}
 			if f.sx < 0 && f.seenX && f.seenY {
 				f.sx, f.sy = f.x, f.y
 			}

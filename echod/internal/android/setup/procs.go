@@ -1,7 +1,9 @@
 package setup
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"runtime"
@@ -27,6 +29,11 @@ func procs() error {
 func MinCores(n int) error {
 	if n < 1 || n > Present() {
 		return fmt.Errorf("setup: %d cores is outside 1..%d", n, Present())
+	}
+	// Only MediaTek's own kernel takes cores offline by itself (its hotplug governor, hps). A
+	// kernel without one leaves every core online, which is already the most n can ask for.
+	if _, err := os.Stat("/proc/hps"); errors.Is(err, fs.ErrNotExist) {
+		return nil
 	}
 	return os.WriteFile("/proc/hps/num_base_perf_serv", []byte(strconv.Itoa(n)), 0o644)
 }

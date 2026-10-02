@@ -32,7 +32,9 @@ fi
 mountpoint -q /run || mount -t tmpfs tmpfs /run
 mountpoint -q /tmp || mount -t tmpfs tmpfs /tmp
 mountpoint -q /data || mount -t ext4 -o noatime $DATA_DEV /data
-mountpoint -q /store || mount -t ext4 -o ro,noatime $STORE_DEV /store
+# Not mountpoint: the root is a slot inside the store, on the same device, so mountpoint calls the
+# store's own mount point not one and mounting it again fails with "Resource busy".
+grep -q " /store " /proc/mounts || mount -t ext4 -o ro,noatime $STORE_DEV /store
 # The root is read-only; what needs writing lives on tmpfs or userdata.
 mount -t tmpfs tmpfs /var/log
 mount -t tmpfs tmpfs /var/tmp
