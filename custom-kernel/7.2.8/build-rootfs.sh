@@ -28,9 +28,15 @@ docker run --rm -e VERSION="$VERSION" -v "$ROOT:/work" \
     go build -trimpath -ldflags "-s -w -X github.com/HuskerMinion/techo5/echod/internal/layout.Version=$VERSION" \
       -o /work/custom-kernel/7.2.8/out/rootfs-stage/bin/techo5 ./cmd/echod
     cd ..
-    for cmd in rebootto btbridge; do
-      go build -trimpath -ldflags "-s -w" -o custom-kernel/7.2.8/out/rootfs-stage/bin/$cmd ./cmd/$cmd
+    # audioprobe lives in the daemon module, the others at the top, as deploy-rootfs.sh builds them.
+    for cmd in fbprobe audioprobe rebootto btbridge; do
+      m=.; [ -d echod/cmd/$cmd ] && m=echod
+      (cd $m && go build -trimpath -ldflags "-s -w" -o /work/custom-kernel/7.2.8/out/rootfs-stage/bin/$cmd ./cmd/$cmd)
     done'
+# The echo canceller (C++) and the Spotify Connect receiver (Rust) are built separately, by
+# tools/linux/build-aec.sh and build-librespot.sh; shipped when they are there, as deploy-rootfs.sh does.
+[ -e "$ROOT/bin/techo5-aec-arm" ] && cp "$ROOT/bin/techo5-aec-arm" "$STAGE/bin/techo5-aec"
+[ -e "$ROOT/bin/techo5-librespot-arm" ] && cp "$ROOT/bin/techo5-librespot-arm" "$STAGE/bin/techo5-librespot"
 
 "$D/k6.sh" 'sh /host/initramfs/build-kernel-bundle.sh'
 cp "$D/out/kernel-rootfs.tar.gz" "$STAGE/inputs/kernel.tar.gz"

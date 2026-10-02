@@ -1,6 +1,7 @@
 Messages the driver logs as errors that report nothing wrong: a configuration value, a regulatory
 notice that arrives before the interface exists, the P2P device's BSS index, a mailbox dump after
-an unanswered command, and a TX time option. Logged as warnings, below the default level.
+an unanswered command, a TX time option, and the firmware's own debug text arriving shorter
+than its header says (the driver drops it either way). Logged as warnings, below the default level.
 
 --- a/common/wlan_lib.c
 +++ b/common/wlan_lib.c
@@ -22,6 +23,26 @@ an unanswered command, and a TX time option. Logged as warnings, below the defau
  				rCmdRssiPathCompasation.c2GRssiCompensation, rCmdRssiPathCompasation.c5GRssiCompensation);
  
  	return wlanSendSetQueryCmd(prAdapter,
+--- a/nic/nic_cmd_event.c
++++ b/nic/nic_cmd_event.c
+@@ -3693,7 +3693,7 @@
+ 
+ 	if (u4EventBufLen < sizeof(EVENT_DEBUG_MSG_T))
+ 	{
+-		DBGLOG(NIC, ERROR, "%s: Invalid event length: %d < %d\n", __func__, u4EventBufLen, sizeof(EVENT_DEBUG_MSG_T));
++		DBGLOG(NIC, WARN, "%s: Invalid event length: %d < %d\n", __func__, u4EventBufLen, sizeof(EVENT_DEBUG_MSG_T));
+ 		return;
+ 	}
+ 	prEventDebugMsg = (P_EVENT_DEBUG_MSG_T) (prEvent->aucBuffer);
+@@ -3701,7 +3701,7 @@
+ 	if (u4EventBufLen <
+ 		sizeof(EVENT_DEBUG_MSG_T) + prEventDebugMsg->u2MsgSize - 1)
+ 	{
+-		DBGLOG(NIC, ERROR, "%s: Invalid event length: %d < %d\n", __func__, u4EventBufLen, sizeof(EVENT_DEBUG_MSG_T) + prEventDebugMsg->u2MsgSize);
++		DBGLOG(NIC, WARN, "%s: Invalid event length: %d < %d\n", __func__, u4EventBufLen, sizeof(EVENT_DEBUG_MSG_T) + prEventDebugMsg->u2MsgSize);
+ 		return;
+ 	}
+ 	u2DebugMsgId = prEventDebugMsg->u2DebugMsgId;
 --- a/nic/nic_tx.c
 +++ b/nic/nic_tx.c
 @@ -3044,7 +3044,7 @@
