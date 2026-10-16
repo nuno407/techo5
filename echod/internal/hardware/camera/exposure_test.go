@@ -91,14 +91,18 @@ func TestMeterClippedEverywhere(t *testing.T) {
 }
 
 func TestBlackPoint(t *testing.T) {
-	for _, tc := range []struct{ low, white, want int }{
-		{43, 2046, 43},  // a real room's floor
-		{300, 2046, 64}, // nothing dark in the frame: capped
-		{40, 100, 25},   // a dim frame keeps most of its range
-		{-1, 2046, 0},   // never negative
+	ped := pickSensor(sensorOV13855).pedestal
+	for _, tc := range []struct{ low, white, pedestal, want int }{
+		{43, 2046, 0, 43},     // a real room's floor
+		{300, 2046, 0, 64},    // nothing dark in the frame: capped
+		{40, 100, 0, 25},      // a dim frame keeps most of its range
+		{-1, 2046, 0, 0},      // never negative
+		{116, 155, ped, 128},  // the OV13855 in a dark room: its pedestal at least
+		{150, 2046, ped, 150}, // its floor above the pedestal
+		{400, 2046, ped, 192}, // capped above the pedestal
 	} {
-		if got := blackFor(tc.low, tc.white); got != tc.want {
-			t.Errorf("blackFor(%d, %d) = %d, want %d", tc.low, tc.white, got, tc.want)
+		if got := blackFor(tc.low, tc.white, tc.pedestal); got != tc.want {
+			t.Errorf("blackFor(%d, %d, %d) = %d, want %d", tc.low, tc.white, tc.pedestal, got, tc.want)
 		}
 	}
 }

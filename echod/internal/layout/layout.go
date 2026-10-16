@@ -154,7 +154,7 @@ func MAC(raw string) string {
 
 // FactoryMAC reads and normalizes the immutable address recorded for the Wi-Fi device.
 func FactoryMAC() (string, error) {
-	raw, err := os.ReadFile(MACPath)
+	raw, err := readIDME("mac_addr", os.ReadFile)
 	if err != nil {
 		v, ok := idmeFallback("mac_addr")
 		if !ok {
@@ -184,16 +184,30 @@ func NameFromMAC(mac string) string {
 	return DefaultName + " " + s[len(s)-6:]
 }
 
-// Idme reads a factory identity field from /proc/idme (on the 2nd gen Show 8's mainline kernel,
-// from the eMMC: idmeFallback), empty on any error. These are written at
+// Idme reads a factory identity field from vendor IDME or the device tree (on the 2nd gen Show 8's
+// mainline kernel, from the eMMC: idmeFallback), empty on any error. These are written at
 // manufacture and never change, so a caller reads once and holds it.
 func Idme(name string) string {
-	raw, err := os.ReadFile("/proc/idme/" + name)
+	raw, err := readIDME(name, os.ReadFile)
 	if err != nil {
 		v, _ := idmeFallback(name)
 		return v
 	}
-	return strings.TrimSpace(string(raw))
+	return strings.TrimSpace(strings.TrimRight(string(raw), "\x00"))
+}
+
+func readIDME(name string, readFile func(string) ([]byte, error)) ([]byte, error) {
+	paths := []string{"/proc/idme/" + name, "/proc/device-tree/idme/" + name + "/value"}
+	for _, path := range paths {
+		raw, err := readFile(path)
+		if err == nil {
+			return raw, nil
+		}
+		if !os.IsNotExist(err) {
+			return nil, err
+		}
+	}
+	return nil, fmt.Errorf("IDME field %s: %w", name, os.ErrNotExist)
 }
 
 // Color is the device's shell, worked out from two idme fields: productid2 is 0 on a black unit and a

@@ -337,6 +337,10 @@ t5_wifi_up() {
 	if [ "$mod" = builtin ]; then
 		n=0; while [ $n -lt 20 ] && ! ip link show wlan0 >/dev/null 2>&1; do sleep 1; n=$((n+1)); done
 		ip link show wlan0 >/dev/null 2>&1 || { log "wifi: no wlan0 from the built-in driver"; return 1; }
+	else
+		# A module must match the running kernel; retain the vendor path for 4.9.
+		kernel_mod=/lib/modules/$(uname -r)/extra/mt76x8_wlan.ko
+		[ -f "$kernel_mod" ] && mod=$kernel_mod
 	fi
 	if ! ip link show wlan0 >/dev/null 2>&1; then
 		[ -e "$mod" ] || { log "wifi: driver not found at $mod"; return 1; }
@@ -632,7 +636,8 @@ t5_bt_native() {
 # With BT_MODULE=builtin hci0 comes from the kernel's own driver instead (t5_bt_native).
 t5_bt_up() {
 	mod=$1; logdir=${2:-/tmp}
-	if [ "$mod" = builtin ]; then
+	# builtin, or a kernel whose own driver already made hci0 (btmtksdio on the cronos mainline build).
+	if [ "$mod" = builtin ] || [ -d /sys/class/bluetooth/hci0 ]; then
 		t5_bt_native || return 1
 	else
 		t5_bt_bridge "$mod" "$logdir" || return 1

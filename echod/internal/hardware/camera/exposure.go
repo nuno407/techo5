@@ -90,6 +90,9 @@ func gammaFor(median, top int) float64 {
 // frame with nothing dark in it must not have its shadows cut.
 const blackCap = 64
 
-func blackFor(low, white int) int {
-	return max(0, min(low, blackCap, white/4))
+// blackFor is that black point above the sensor's pedestal. The OV02B10 and OV9734 come with theirs
+// taken off; the OV13855 keeps 64 a pixel, 128 summed (a dark room read 55 to 67 on every channel,
+// 2026-10-16), which left as it was is a grey fog over the whole picture.
+func blackFor(low, white, pedestal int) int {
+	return pedestal + max(0, min(low-pedestal, blackCap, (white-pedestal)/4))
 }

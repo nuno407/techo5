@@ -53,25 +53,51 @@ import (
 // Show 5, it picked the right sensor by accident. Telling the boards apart is what turned that into
 // a choice someone had to make, and the symptom of making it wrongly is a camera that opens, streams
 // nothing, and times out.
+//
+// The 2nd gen Show 8 (athena) has an OmniVision OV13855, and only its mainline kernel drives it
+// (custom-kernel/athena, mt8183-athena-camera.c): the 2112x1568 binned mode at 15 frames a second,
+// the first pixel blue, in the same packing. Its frame is fixed at 6428 lines, so the shutter stops
+// short of that rather than trading frame rate.
 type sensorSpec struct {
 	w, h       int  // what the sensor hands over
 	outW, outH int  // one pixel per Bayer cell: the live view and the stream
 	minShut    int  // shortest exposure the driver takes, in lines
 	frameLines int  // shutter lines that fit a frame at the sensor's own rate
+	maxShut    int  // longest exposure, in lines: past frameLines the frame rate drops
 	blueFirst  bool // the first pixel of each cell is blue, not red
+	pedestal   int  // the black level the sensor adds, on the summed-green scale (blackFor)
 }
 
-// hasOV9734 is whether this board carries the OV9734 rather than the OV02B10.
-func hasOV9734() bool { return layout.Checkers() || layout.Crown() }
+type sensorKind int
 
-func pickSensor(ov9734 bool) sensorSpec {
-	if ov9734 {
-		return sensorSpec{w: 1280, h: 720, outW: 640, outH: 360, minShut: 1, frameLines: 798, blueFirst: true}
+const (
+	sensorOV02B10 sensorKind = iota
+	sensorOV9734
+	sensorOV13855
+)
+
+// boardSensor is the sensor this board carries.
+func boardSensor() sensorKind {
+	switch {
+	case layout.AthenaMainline():
+		return sensorOV13855
+	case layout.Checkers() || layout.Crown():
+		return sensorOV9734
 	}
-	return sensorSpec{w: 1600, h: 1200, outW: 800, outH: 600, minShut: 4, frameLines: 1200}
+	return sensorOV02B10
 }
 
-var sensor = pickSensor(hasOV9734())
+func pickSensor(kind sensorKind) sensorSpec {
+	switch kind {
+	case sensorOV9734:
+		return sensorSpec{w: 1280, h: 720, outW: 640, outH: 360, minShut: 1, frameLines: 798, maxShut: 4000, blueFirst: true}
+	case sensorOV13855:
+		return sensorSpec{w: 2112, h: 1568, outW: 1056, outH: 784, minShut: 4, frameLines: 6412, maxShut: 6412, blueFirst: true, pedestal: 128}
+	}
+	return sensorSpec{w: 1600, h: 1200, outW: 800, outH: 600, minShut: 4, frameLines: 1200, maxShut: 4000}
+}
+
+var sensor = pickSensor(boardSensor())
 
 // Width and Height are the frames handed out.
 var Width, Height = sensor.outW, sensor.outH
@@ -225,6 +251,7 @@ func (m *mmio) unmap() {
 // device is the open camera: file descriptors, register windows, the frame buffers.
 type device struct {
 	hold           aeHold // exposure held still through a sudden change, for gestures
+	v4l2           bool
 	isp, sens, ion int
 	cam, sen, mipi *mmio
 	buf            []byte
@@ -238,6 +265,9 @@ type device struct {
 }
 
 func open() (*device, error) {
+	if path := mainlineCameraPath(); path != "" {
+		return openV4L2(path)
+	}
 	d := &device{isp: -1, sens: -1, ion: -1}
 	var err error
 	if d.isp, err = syscall.Open("/dev/camera-isp", syscall.O_RDWR, 0); err != nil {
@@ -316,6 +346,10 @@ func open() (*device, error) {
 // setFeature is KDIMGSENSORIOC_X_FEATURECONCTROL with one integer parameter. The kernel is 64-bit
 // and reads the parameter as an unsigned long, so eight bytes go over.
 func (d *device) setFeature(id uint32, v uint64) {
+	if d.v4l2 {
+		d.v4l2Feature(id, v)
+		return
+	}
 	para, size := heapNew[[8]byte](), heapNew[uint32]()
 	for i := range para {
 		para[i] = byte(v >> (8 * i))
@@ -335,19 +369,20 @@ func (d *device) setFeature(id uint32, v uint64) {
 // first — up to a frame at the sensor's rate — then gain, then longer shutters at the cost of
 // frame rate, then the rest of the gain.
 const (
-	aeTarget   = 290  // mean of the 10-bit frame to aim for: a lit room, no clipping to speak of
-	aeDelay    = 3    // frames between changes: a new exposure takes two frames to show
-	aeMaxShut  = 4000 // beyond this the frame rate drops under 5 a second
-	aeMinGain  = 64   // 1x
-	aeMidGain  = 384  // 6x, before trading frame rate
-	aeMaxGain  = 992  // the driver's ceiling, 15.5x
-	aeDeadband = 6    // no change inside target ± this
+	aeTarget   = 290 // mean of the 10-bit frame to aim for: a lit room, no clipping to speak of
+	aeDelay    = 3   // frames between changes: a new exposure takes two frames to show
+	aeMinGain  = 64  // 1x
+	aeMidGain  = 384 // 6x, before trading frame rate
+	aeMaxGain  = 992 // the driver's ceiling, 15.5x
+	aeDeadband = 6   // no change inside target ± this
 )
 
-// The shortest exposure the sensor takes and the lines that fit one of its frames: its own.
+// The shortest exposure the sensor takes, the lines that fit one of its frames, and the longest it
+// is given (4000 lines on the Show 5 sensors: beyond that the frame rate drops under 5 a second).
 var (
 	aeMinShut = sensor.minShut
 	aeFrame   = sensor.frameLines
+	aeMaxShut = sensor.maxShut
 )
 
 func (d *device) autoExpose(bayer []byte) {
@@ -381,7 +416,7 @@ func (d *device) autoExpose(bayer []byte) {
 	case want <= float64(aeMaxShut*aeMidGain):
 		shutter, gain = int(want/aeMidGain), aeMidGain
 	default:
-		shutter, gain = aeMaxShut, int(want/aeMaxShut)
+		shutter, gain = aeMaxShut, int(want/float64(aeMaxShut))
 	}
 	shutter = min(max(shutter, aeMinShut), aeMaxShut)
 	gain = min(max(gain, aeMinGain), aeMaxGain)
@@ -399,6 +434,10 @@ func (d *device) autoExpose(bayer []byte) {
 }
 
 func (d *device) close() {
+	if d.v4l2 {
+		syscall.Close(d.isp)
+		return
+	}
 	if d.cam != nil {
 		d.cam.mask(regTgVfCon, 1, 0) // view finder off
 	}
@@ -602,6 +641,10 @@ func teardownCSI2(s, ana *mmio) {
 // with interrupts masked; on every tick the DMA is aimed at the next slot, so the one it just
 // left is whole and stays untouched for slots-1 more periods.
 func (d *device) stream(stop chan struct{}, frame func(bayer []byte)) {
+	if d.v4l2 {
+		d.streamV4L2(stop, frame)
+		return
+	}
 	cam := d.cam
 	cur := 0
 	cam.wr(regImgoBase, d.mva)
@@ -707,8 +750,10 @@ func sample(raw []byte, step int) tone {
 	}
 	n := float64(taken)
 	t := tone{gainR: 1, gainB: 1, white: 1, gamma: gammaNormal}
-	avgR, avgG, avgB := float64(sumR)*2/n, float64(sumG)/n, float64(sumB)*2/n
-	if avgR > 1 && avgB > 1 {
+	// Gray-world balances what the light put there, so the sensor's own black level comes off first.
+	ped := float64(sensor.pedestal)
+	avgR, avgG, avgB := float64(sumR)*2/n-ped, float64(sumG)/n-ped, float64(sumB)*2/n-ped
+	if avgR > 1 && avgB > 1 && avgG > 1 {
 		// Quantised so a steady scene keeps asking for the tables it already has.
 		t.gainR = math.Round(avgG/avgR*256) / 256
 		t.gainB = math.Round(avgG/avgB*256) / 256
@@ -731,11 +776,11 @@ func sample(raw []byte, step int) tone {
 			break
 		}
 	}
-	if t.white < 32 {
-		t.white = 32
+	if t.white < sensor.pedestal+32 {
+		t.white = sensor.pedestal + 32
 	}
-	t.gamma = gammaFor(median, t.white)
-	t.black = blackFor(low, t.white)
+	t.gamma = gammaFor(median-sensor.pedestal, t.white-sensor.pedestal)
+	t.black = blackFor(low, t.white, sensor.pedestal)
 	return t
 }
 

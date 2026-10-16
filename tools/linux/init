@@ -100,6 +100,11 @@ snapshot() {
 boot_slot() {
 	slot=$1
 	root=/store/slots/$slot
+	if [ -f /etc/techo5/kernel-release ] &&
+	   [ ! -f "$root/lib/modules/$(uname -r)/extra/mt76x8_wlan.ko" ]; then
+		crumb "slot $slot has no matching kernel modules; staying in rescue"
+		return 1
+	fi
 	[ -x $root/sbin/init ] || [ -L $root/sbin/init ] || { crumb "slot $slot has no /sbin/init"; return 1; }
 	mount --bind $root /newroot || { crumb "bind mount of slot $slot failed"; return 1; }
 	mkdir -p /run/techo5

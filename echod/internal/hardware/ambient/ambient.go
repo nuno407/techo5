@@ -10,7 +10,9 @@
 // IIO device on this board is the auxadc, which is why metrics.LuxPath finds nothing.)
 //
 // The 2nd gen Show 8 on TECHO5's mainline kernel is different: its TCS3400 is an IIO device with raw
-// color counts and no lux, so it is polled and converted here (iio.go).
+// color counts and no lux, so it is polled and converted here (iio.go). The Echo Show 5 on TECHO5's
+// mainline kernel has no misc node either: its JSA1214 is an IIO device that reports lux with its
+// own scale, so it is polled through metrics.
 package ambient
 
 import (
@@ -23,6 +25,7 @@ import (
 	"time"
 
 	"github.com/HuskerMinion/techo5/echod/internal/component"
+	"github.com/HuskerMinion/techo5/echod/internal/hardware/metrics"
 	"github.com/HuskerMinion/techo5/echod/internal/layout"
 	"github.com/HuskerMinion/techo5/echod/internal/lib/hook"
 	"github.com/HuskerMinion/techo5/echod/internal/lib/input"
@@ -51,8 +54,9 @@ type Sensor struct {
 	last float64
 	at   time.Time
 
-	dev *input.Device
-	iio *tcs3400 // athena on mainline instead of dev
+	dev     *input.Device
+	iio     *tcs3400 // athena on mainline instead of dev
+	luxPath string   // an IIO light sensor read through metrics (cronos on mainline) instead of dev
 }
 
 var (
@@ -78,6 +82,19 @@ func (s *Sensor) Current() (lux float64, at time.Time, ok bool) {
 func (s *Sensor) Start(context.Context) error {
 	if layout.AthenaMainline() {
 		return s.startIIO()
+	}
+	if _, err := os.Stat(misc); os.IsNotExist(err) {
+		path := metrics.Reader{}.LuxPath()
+		if path == "" {
+			return fmt.Errorf("ambient: no supported light sensor")
+		}
+		s.mu.Lock()
+		s.luxPath = path
+		s.mu.Unlock()
+		slog.Info("light sensor on", "device", path, "period", period)
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("ambient: finding the sensor: %w", err)
 	}
 	if err := os.WriteFile(misc+"/alsdelay", []byte(fmt.Sprint(period.Nanoseconds())), 0o644); err != nil {
 		return fmt.Errorf("ambient: setting the report period: %w", err)
@@ -118,10 +135,10 @@ func (s *Sensor) seed(abs func(code uint16) (input.AbsInfo, error)) (float64, bo
 
 func (s *Sensor) Close() error {
 	s.mu.Lock()
-	t, dev := s.iio, s.dev
-	s.iio, s.dev = nil, nil
+	t, dev, path := s.iio, s.dev, s.luxPath
+	s.iio, s.dev, s.luxPath = nil, nil, ""
 	s.mu.Unlock()
-	if t != nil {
+	if t != nil || path != "" {
 		return nil
 	}
 	_ = os.WriteFile(misc+"/alsactive", []byte("0"), 0o644)
@@ -139,10 +156,13 @@ var errNotOpen = errors.New("ambient: the sensor is not open")
 // first, or while it runs, leaves it nothing to read rather than a nil sensor.
 func (s *Sensor) Run(ctx context.Context) error {
 	s.mu.Lock()
-	t, dev := s.iio, s.dev
+	t, dev, path := s.iio, s.dev, s.luxPath
 	s.mu.Unlock()
 	if t != nil {
 		return s.runIIO(ctx, t)
+	}
+	if path != "" {
+		return s.poll(ctx, path)
 	}
 	if dev == nil {
 		return errNotOpen
@@ -161,10 +181,33 @@ func (s *Sensor) Run(ctx context.Context) error {
 		if e.Type != input.EvAbs || e.Code != 0 { // ABS_X carries the lux
 			continue
 		}
-		lux := float64(e.Value)
-		s.mu.Lock()
-		s.last, s.at = lux, time.Now()
-		s.mu.Unlock()
-		s.Lux.Emit(lux)
+		s.emit(float64(e.Value))
+	}
+}
+
+func (s *Sensor) emit(lux float64) {
+	s.mu.Lock()
+	s.last, s.at = lux, time.Now()
+	s.mu.Unlock()
+	s.Lux.Emit(lux)
+}
+
+func (s *Sensor) poll(ctx context.Context, path string) error {
+	ticker := time.NewTicker(period)
+	defer ticker.Stop()
+	for {
+		if ctx.Err() != nil {
+			return nil
+		}
+		reading := (metrics.Reader{}).Lux(path)
+		if !reading.Known {
+			return fmt.Errorf("ambient: reading %s", path)
+		}
+		s.emit(reading.Value)
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+		}
 	}
 }

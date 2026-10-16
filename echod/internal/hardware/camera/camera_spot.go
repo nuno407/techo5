@@ -680,3 +680,5 @@ func lumaGrid(raw []byte, w, h int) []uint8 {
 	}
 	return out
 }
+
+func Available() bool { return availableVendor() }
