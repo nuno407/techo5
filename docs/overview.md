@@ -51,7 +51,10 @@ Android, with one Go daemon, `echod`, doing everything the device does:
   with no setup. Stations play on the device's own speaker or on Bluetooth earbuds; song, artist and
   cover come from iHeartRadio or TuneIn behind the page.
 - **Camera**: the front camera as a Home Assistant camera entity (plus JPEG and MJPEG over HTTP
-  when switched on). Auto-exposure meters a center-weighted zone grid, so a window behind somebody
+  when switched on). On the 2nd gen Show 8 with a kernel that has its camera, ISP, H.264 encoder
+  and face detector drivers (none ships yet), the RTSP stream is H.264 from the SoC's encoder, and
+  the face detector feeds a Face sensor in Home Assistant while its Face detection switch is on.
+  Auto-exposure meters a center-weighted zone grid, so a window behind somebody
   no longer sets it, and the tone curve finds black and lifts the middle of a backlit frame. Off
   unless something is looking, and off while the mute button is engaged.
 - **Phone calls** through a SIP provider (TLS and SRTP): placed from Home Assistant (`phone_call`) or
