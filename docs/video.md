@@ -17,6 +17,9 @@ picture fills the width, and the edge of the glass takes its corners.
   Show 8 2nd gen plays H.265 up to 1080p at 30 frames a second, and VP8 and VP9 up to 1080p at 120. The
   Skylight plays H.265, VP8 and VP9 up to 1080p at 30. The other Shows and the
   Spot don't play them.
+- **H.264 in hardware:** on the Echo Show 8 2nd gen, only with a kernel that has its H.264 decoder
+  and MDP3 drivers and an image that carries GStreamer (tools/linux/build-gst-arm64.sh, a 64-bit
+  userspace); neither ships yet. There H.264 is decoded by the SoC's decoder rather than the cores.
 - **Sound:** AAC, MP3, Opus, AC-3 and E-AC-3 (Dolby Digital), surround mixed down to stereo. A
   video whose sound is something else (DTS, TrueHD) plays without it.
 - **Loudness:** films are mixed much quieter than music, so the Show evens a video's sound out to
