@@ -4,12 +4,17 @@ package screen
 
 import (
 	"image"
+	"log/slog"
 	"math"
+
+	"github.com/HuskerMinion/techo5/echod/internal/hardware/gpu"
 )
 
 // A tint scales every pixel's red, green and blue on its way to the panel: the night's warmer white.
-// It is a table lookup a pixel over a copy of each frame, the canvas itself left as it was drawn, so
-// what is drawn once and kept is never tinted twice.
+// Where techo5-gpu drives the panel it is the display pipeline's own color correction (the CRTC's
+// CTM, the SoC's CCORR block), set once and free for every frame after, video included. On the
+// framebuffer it is a table lookup a pixel over a copy of each frame, the canvas itself left as it was
+// drawn, so what is drawn once and kept is never tinted twice.
 
 // Tint is the gain on red, green and blue, each 0 to 1 of the value drawn; {1, 1, 1} is none.
 type Tint [3]float64
@@ -19,7 +24,7 @@ var None = Tint{1, 1, 1}
 
 func (t Tint) none() bool { return t == None || t == Tint{} }
 
-// SetTint has the panel show everything with t from the next frame.
+// SetTint has the panel show everything with t from the next frame (the next vblank, in the pipeline).
 func (d *Device) SetTint(t Tint) {
 	if t.none() {
 		t = None
@@ -28,6 +33,21 @@ func (d *Device) SetTint(t Tint) {
 		return
 	}
 	d.tint = t
+	d.tintTable = nil
+	if d.gpu != nil {
+		var c gpu.Color
+		if t != None {
+			c.Matrix = &[9]float64{t[0], 0, 0, 0, t[1], 0, 0, 0, t[2]}
+		}
+		if _, err := d.gpu.SetColor(c); err == nil {
+			return
+		} else if !d.tintWarned {
+			// The GPU reads the canvas as it is, so there is nowhere on this path to tint in software.
+			slog.Warn("screen: the display pipeline cannot tint; the screen is shown untinted", "err", err)
+			d.tintWarned = true
+		}
+		return
+	}
 	d.tintTable = tintTable(t)
 }
 
