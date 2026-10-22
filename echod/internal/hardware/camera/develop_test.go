@@ -11,7 +11,7 @@ import (
 
 // fullReference is Full as it was written first, a pixel at a time, kept to hold the fast one to it.
 func fullReference(f *Frame) *image.RGBA {
-	g := streamed()
+	g := geometryOf(f)
 	w, h := g.w, g.h
 	px := make([]uint16, w*h)
 	for y := 0; y < h; y++ {
@@ -73,11 +73,11 @@ func TestFullMatchesTheReference(t *testing.T) {
 	defer func() { sensor = saved }()
 	for _, blue := range []bool{false, true} {
 		sensor.blueFirst = blue
-		g := streamed()
+		g := geometry{w: 64, h: 48, bpl: 64 * 10 / 8}
 		raw := make([]byte, g.bpl*g.h)
 		rand.New(rand.NewSource(7)).Read(raw)
-		got := (&Frame{raw: raw}).Full()
-		want := fullReference(&Frame{raw: raw})
+		got := (&Frame{raw: raw, full: &g}).Full()
+		want := fullReference(&Frame{raw: raw, full: &g})
 		if !bytes.Equal(got.Pix, want.Pix) {
 			t.Fatalf("blueFirst=%v: the fast Full differs from the reference", blue)
 		}
