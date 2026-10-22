@@ -24,6 +24,12 @@ func picture(w, h int) *image.RGBA {
 // Every board but the 2nd gen Show 5 on a mainline kernel keeps the camera pages as they were: the
 // stream is the half-size picture and the still the full-size one, each a single encode at quality 85.
 func TestOtherBoardsKeepHalfSizePagesAt85(t *testing.T) {
+	if fullPagesOn(false, false) {
+		t.Fatal("a board with neither the Show 5's mainline kernel nor the Show 8's JPEG encoder sends full-size pages")
+	}
+	if !fullPagesOn(true, false) || !fullPagesOn(false, true) {
+		t.Fatal("the Show 5 on mainline, or the Show 8 with its JPEG encoder, does not send full-size pages")
+	}
 	was := fullPages
 	fullPages = false
 	t.Cleanup(func() { fullPages = was })

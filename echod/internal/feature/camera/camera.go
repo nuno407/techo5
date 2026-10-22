@@ -25,6 +25,7 @@ import (
 	"github.com/HuskerMinion/techo5/echod/internal/feature/camstream"
 	"github.com/HuskerMinion/techo5/echod/internal/feature/web"
 	"github.com/HuskerMinion/techo5/echod/internal/hardware/camera"
+	"github.com/HuskerMinion/techo5/echod/internal/hardware/jpegenc"
 	"github.com/HuskerMinion/techo5/echod/internal/layout"
 )
 
@@ -84,10 +85,16 @@ func guarded(h http.HandlerFunc) http.HandlerFunc {
 type pageGenKey struct{}
 
 // fullPages is whether the camera pages send full-size pictures at qualityFull: the 2nd gen Show 5 on
-// a mainline kernel, where it was tried and its cores keep up. Every other board sends the half-size
-// picture and the full-size still at quality, as before; the 2nd gen Show 8 too, whose 2112x1568
-// frame would be about four times the work on the cores per viewer.
-var fullPages = layout.CronosMainline()
+// a mainline kernel, where it was tried and its cores keep up, and the 2nd gen Show 8 where its kernel
+// has the JPEG encoder (hwEncode). Every other board sends the half-size picture and the full-size still
+// at quality, as before; a Show 8 without the encoder too, whose 2112x1568 frame would be about four
+// times the work on the cores per viewer.
+var fullPages = fullPagesOn(layout.CronosMainline(), hwEncode)
+
+func fullPagesOn(cronosMainline, hwEncode bool) bool { return cronosMainline || hwEncode }
+
+// hwEncode is whether the pages' JPEGs are encoded on the 2nd gen Show 8's JPEG encoder.
+var hwEncode = layout.AthenaMainline() && jpegenc.Available()
 
 // encode is a streamed frame: at the sensor's full size where fullPages, where viewers of the same
 // frame share one encode (the last one is kept, and a second viewer asking for it while it is being
@@ -115,8 +122,12 @@ func encodeHalf(f interface{ Image() *image.RGBA }) ([]byte, error) {
 	return encodeWhole(f.Image(), quality)
 }
 
-// stillFrame is a frame for a still: the next frame.
+// stillFrame is a frame for a still: one from the whole array (Still) where the encoder takes it, else
+// the next frame.
 func stillFrame(ctx context.Context) (*camera.Frame, error) {
+	if hwEncode {
+		return camera.Get().Still(ctx)
+	}
 	return camera.Get().Snapshot(ctx)
 }
 
@@ -141,9 +152,19 @@ var encoded struct {
 }
 
 // encodeFrame is a frame, streamed or still, as a JPEG where fullPages: developed on the cores at
-// full size (Full) and encoded in strips across them (encodeStripes).
+// full size (Full), and encoded on the 2nd gen Show 8's JPEG encoder where it takes the picture (a
+// fraction of the time, and of the power, the cores take), else in strips across the cores
+// (encodeStripes), and there too if the encoder fails a picture.
 func encodeFrame(f *camera.Frame) ([]byte, error) {
-	return encodeStripes(f.Full(), qualityFull)
+	img := f.Full()
+	if hwEncode && jpegenc.Fits(img.Bounds()) {
+		b, err := jpegenc.Encode(img, qualityFull)
+		if err == nil {
+			return b, nil
+		}
+		slog.Warn("camera: hardware jpeg, encoding on the cores", "err", err)
+	}
+	return encodeStripes(img, qualityFull)
 }
 
 // snapshot answers with the next frame.
