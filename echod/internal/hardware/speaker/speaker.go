@@ -350,8 +350,15 @@ func New() *Player {
 	if curve, ok := firstCurves[t.Name()]; ok {
 		p.first = &curve
 	}
+	if curve, ok := unitCurve(t); ok {
+		p.first = &curve
+	}
 	return p
 }
+
+// unitCurve is a unit's own first-step curve, where its tuning files give one, in place of firstCurves;
+// none here (a board's file sets it).
+var unitCurve = func(*asp.Tuning) (curve [VolumeSteps + 1]float64, ok bool) { return }
 
 var (
 	once   sync.Once
