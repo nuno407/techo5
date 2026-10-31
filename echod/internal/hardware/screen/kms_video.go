@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"image"
 	"log/slog"
+
+	"github.com/HuskerMinion/techo5/echod/internal/lib/memx"
 )
 
 // A video on KMS's planes (the Surface RT): the decoder's YUV 4:2:0 pictures go as they are onto an
@@ -301,12 +303,12 @@ func copyI420(dst []byte, pitch int, src []byte, w, h int) {
 	ys, cs := (w+3)&^3, ((w+1)/2+3)&^3
 	cw, ch := (w+1)/2, (h+1)/2
 	for y := range h {
-		copy(dst[y*pitch:y*pitch+w], src[y*ys:y*ys+w])
+		memx.Copy(dst[y*pitch:y*pitch+w], src[y*ys:y*ys+w])
 	}
 	so, do := ys*h, pitch*h
 	for range 2 {
 		for y := range ch {
-			copy(dst[do+y*pitch/2:do+y*pitch/2+cw], src[so+y*cs:so+y*cs+cw])
+			memx.Copy(dst[do+y*pitch/2:do+y*pitch/2+cw], src[so+y*cs:so+y*cs+cw])
 		}
 		so += cs * ch
 		do += pitch / 2 * ch

@@ -5,6 +5,8 @@ package screen
 import (
 	"fmt"
 	"image"
+
+	"github.com/HuskerMinion/techo5/echod/internal/lib/memx"
 )
 
 // A frame is a picture made somewhere else already in the panel's own shape and byte order — a video
@@ -72,7 +74,7 @@ func (d *Device) paintFrame(dst []byte, next int, frame []byte, over image.Recta
 	d.markStale(next)
 	over = over.Intersect(d.canvas.Rect)
 	if over.Empty() && d.line == rowBytes {
-		copy(dst[:rowBytes*d.panelH], frame)
+		memx.Copy(dst[:rowBytes*d.panelH], frame)
 		return nil
 	}
 	if len(d.row) < rowBytes {
@@ -83,7 +85,7 @@ func (d *Device) paintFrame(dst []byte, next int, frame []byte, over image.Recta
 		src := frame[py*rowBytes : (py+1)*rowBytes]
 		out := dst[py*d.line : py*d.line+rowBytes]
 		if !d.overRow(over, py) {
-			copy(out, src)
+			memx.Copy(out, src)
 			continue
 		}
 		// Blended in RAM and written whole: the framebuffer's own memory is slow to read back.

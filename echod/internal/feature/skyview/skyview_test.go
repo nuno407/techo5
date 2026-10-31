@@ -5,6 +5,7 @@ import (
 	"context"
 	"image"
 	"image/color"
+	"image/draw"
 	"image/png"
 	"math"
 	"net/http"
@@ -237,5 +238,30 @@ func BenchmarkDrawPanning(b *testing.B) {
 	for i := range b.N {
 		f.Pan(1+i%3, 0)
 		f.Draw(dst)
+	}
+}
+
+// copySrc is draw.Draw with draw.Src, clipping and all.
+func TestCopySrcIsDrawSrc(t *testing.T) {
+	src := image.NewRGBA(image.Rect(0, 0, 40, 30))
+	for i := range src.Pix {
+		src.Pix[i] = byte(i * 7)
+	}
+	for _, c := range []struct {
+		r  image.Rectangle
+		sp image.Point
+	}{
+		{image.Rect(0, 0, 50, 50), image.Point{}},
+		{image.Rect(-10, -5, 30, 25), image.Point{}},
+		{image.Rect(20, 10, 60, 40), image.Pt(5, 3)},
+		{image.Rect(5, 5, 25, 15), image.Pt(-4, 2)},
+	} {
+		want := image.NewRGBA(image.Rect(0, 0, 50, 40))
+		got := image.NewRGBA(image.Rect(0, 0, 50, 40))
+		draw.Draw(want, c.r, src, c.sp, draw.Src)
+		copySrc(got, c.r, src, c.sp)
+		if !bytes.Equal(got.Pix, want.Pix) {
+			t.Errorf("%v from %v: differs from draw.Draw", c.r, c.sp)
+		}
 	}
 }

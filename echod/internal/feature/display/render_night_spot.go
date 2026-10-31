@@ -5,7 +5,6 @@ package display
 import (
 	"image"
 	"image/color"
-	"image/draw"
 	"math"
 	"time"
 
@@ -30,7 +29,7 @@ func (s roundScene) nightClockFace() bool {
 
 // nightFace draws the night clock in its style.
 func (r *roundRenderer) nightFace(s roundScene) {
-	draw.Draw(r.dst, r.dst.Rect, image.NewUniform(color.Black), image.Point{}, draw.Src)
+	fillCanvas(r.dst, color.Black)
 	switch s.redStyle {
 	case nightStyleLED:
 		r.nightLED(s.now)

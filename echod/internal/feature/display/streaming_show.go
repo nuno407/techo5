@@ -3,9 +3,7 @@
 package display
 
 import (
-	"image"
 	"image/color"
-	"image/draw"
 )
 
 // colStreaming is the dot that says the camera is being streamed: the Spot's camera-on green.
@@ -24,6 +22,6 @@ func (r *renderer) streamingDot(s scene) {
 
 // watchedDark is the frame of a dark panel while the camera is streamed: black, and the dot.
 func (r *renderer) watchedDark() {
-	draw.Draw(r.dst, r.dst.Rect, image.NewUniform(color.Black), image.Point{}, draw.Src)
+	fillCanvas(r.dst, color.Black)
 	r.streamingDot(scene{streaming: true})
 }

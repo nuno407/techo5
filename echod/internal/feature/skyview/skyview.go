@@ -19,6 +19,7 @@ import (
 	"github.com/HuskerMinion/techo5/echod/internal/component"
 	"github.com/HuskerMinion/techo5/echod/internal/feature/home"
 	"github.com/HuskerMinion/techo5/echod/internal/lib/hook"
+	"github.com/HuskerMinion/techo5/echod/internal/lib/memx"
 )
 
 func init() {
@@ -548,7 +549,7 @@ func (f *Feature) Draw(dst *image.RGBA) {
 	}
 	key := fmt.Sprintf("%d %d %d %dx%d %d %s %s", x0, y0, z, w, h, gen, s.style(), radar)
 	if f.composed != nil && f.key == key {
-		draw.Draw(dst, dst.Rect, f.composed, image.Point{}, draw.Src)
+		copySrc(dst, dst.Rect, f.composed, image.Point{})
 		f.mu.Unlock()
 		return
 	}
@@ -563,7 +564,25 @@ func (f *Feature) Draw(dst *image.RGBA) {
 	f.mu.Lock()
 	f.key = key
 	f.mu.Unlock()
-	draw.Draw(dst, dst.Rect, out, image.Point{}, draw.Src)
+	copySrc(dst, dst.Rect, out, image.Point{})
+}
+
+// copySrc is draw.Draw(dst, r, src, sp, draw.Src) for two RGBA images, a row at a time through
+// lib/memx, which reads ahead: image/draw's own copy is half as fast on the Surface RT, and the map is
+// copied whole every frame the aircraft move.
+func copySrc(dst *image.RGBA, r image.Rectangle, src *image.RGBA, sp image.Point) {
+	orig := r.Min
+	r = r.Intersect(dst.Rect).Intersect(src.Rect.Add(orig.Sub(sp)))
+	if r.Empty() {
+		return
+	}
+	sp = sp.Add(r.Min.Sub(orig))
+	n := r.Dx() * 4
+	for y := range r.Dy() {
+		d := dst.PixOffset(r.Min.X, r.Min.Y+y)
+		o := src.PixOffset(sp.X, sp.Y+y)
+		memx.Copy(dst.Pix[d:d+n], src.Pix[o:o+n])
+	}
 }
 
 // compose draws the tiles of the view whose top left is world pixel x0, y0 at zoom z.
@@ -580,7 +599,7 @@ func (f *Feature) compose(out *image.RGBA, style, radar string, z, x0, y0 int) {
 			}
 			x := ((tx % n) + n) % n
 			if img, ok := f.tiles.tile(tileKey{style, z, x, ty}); ok {
-				draw.Draw(out, r, img, image.Point{}, draw.Src)
+				copySrc(out, r, img, image.Point{})
 			} else {
 				f.coarser(out, r, style, z, x, ty)
 			}

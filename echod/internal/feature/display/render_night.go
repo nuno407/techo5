@@ -44,7 +44,7 @@ func (s scene) redClockFace() bool {
 
 // redClockPage is the night as a clock alone.
 func (r *renderer) redClockPage(s scene) {
-	draw.Draw(r.dst, r.dst.Rect, image.NewUniform(color.Black), image.Point{}, draw.Src)
+	fillCanvas(r.dst, color.Black)
 	r.ink = nightInk
 	switch s.redStyle {
 	case nightStyleLED:

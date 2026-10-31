@@ -5,7 +5,6 @@ package display
 import (
 	"image"
 	"image/color"
-	"image/draw"
 	"math"
 	"strings"
 	"time"
@@ -269,7 +268,7 @@ func (r *roundRenderer) cameraDot() {
 
 // watchedDark is the frame of a dark face while the camera is streamed: black, and the camera's mark.
 func (r *roundRenderer) watchedDark() {
-	draw.Draw(r.dst, r.dst.Rect, image.NewUniform(color.Black), image.Point{}, draw.Src)
+	fillCanvas(r.dst, color.Black)
 	r.cameraDot()
 }
 
