@@ -56,16 +56,27 @@ var AnimationScripts = []string{}
 var (
 	Board = showBoard(kernelCmdline(), gatingDir, deviceTreeCompatible())
 	Model = map[string]string{
-		boardCronos:   "Echo Show 5 2nd gen (cronos)",
-		boardCheckers: "Echo Show 5 1st gen (checkers)",
-		boardCrown:    "Echo Show 8 1st gen (crown)",
-		boardAthena:   "Echo Show 8 2nd gen (athena)",
-		boardSkylight: "Skylight Calendar 15 (150-CAL)",
+		boardCronos:    "Echo Show 5 2nd gen (cronos)",
+		boardCheckers:  "Echo Show 5 1st gen (checkers)",
+		boardCrown:     "Echo Show 8 1st gen (crown)",
+		boardAthena:    "Echo Show 8 2nd gen (athena)",
+		boardSkylight:  "Skylight Calendar 15 (150-CAL)",
+		boardSurfaceRT: "Microsoft Surface RT",
 	}[Board]
 
 	// DefaultName is the fallback display name when a device has none recorded.
-	DefaultName = map[bool]string{false: "Echo Show", true: "Skylight Calendar"}[Board == boardSkylight]
+	DefaultName = defaultName(Board)
 )
+
+func defaultName(board string) string {
+	switch board {
+	case boardSkylight:
+		return "Skylight Calendar"
+	case boardSurfaceRT:
+		return "Surface RT"
+	}
+	return "Echo Show"
+}
 
 const (
 	boardCronos   = "cronos"
@@ -73,6 +84,8 @@ const (
 	boardCrown    = "crown"
 	boardAthena   = "athena"
 	boardSkylight = "skylight"
+	// boardSurfaceRT is the Microsoft Surface RT (Tegra 3) on postmarketOS's mainline kernel.
+	boardSurfaceRT = "surface-rt"
 
 	// gatingDir is Amazon's own mute driver, amazon-gating, which the 1st gen Show 5 and the Show 8
 	// both carry; the 2nd gen Show 5 has gpio-privacy instead.
@@ -87,6 +100,11 @@ const (
 	// Calendar 15 (150-CAL): a Rockchip RK3566 board (Skyworth D156) on TECHO5's mainline kernel.
 	// It is not an Echo, but it is a screen device with the Show's kind of userland.
 	skylightCompatible = "skylight,cal150"
+
+	// surfaceRTCompatible is in the Surface RT's root compatible on its mainline kernel:
+	// "microsoft,surface-rt-efi", "microsoft,surface-rt", "nvidia,tegra30" on the unit read 2026-10-30.
+	// Not an Echo either: a 1366 by 768 landscape tablet under postmarketOS and systemd.
+	surfaceRTCompatible = "microsoft,surface-rt"
 )
 
 // Checkers is whether this is the 1st gen Echo Show 5.
@@ -101,6 +119,20 @@ func Athena() bool { return Board == boardAthena }
 // Skylight is whether this is the Skylight Calendar 15 (150-CAL): a 1920 by 1080 landscape screen,
 // no microphone, a speaker on the RK809's headphone outputs.
 func Skylight() bool { return Board == boardSkylight }
+
+// SurfaceRT is whether this is the Microsoft Surface RT: a 1366 by 768 landscape screen, a WM8962
+// codec on its second sound card, Wi-Fi on mlan0, no mute switch, no LEDs and no lens cover.
+func SurfaceRT() bool { return Board == boardSurfaceRT }
+
+// SoundCard is the id of the sound card the speaker and the microphones are on, where it is not card
+// 0: the Surface RT's card 0 is the HDMI output (tegrahda) and its codec is "WM8962", the next. Empty
+// on every Echo, whose one card is 0.
+func SoundCard() string {
+	if SurfaceRT() {
+		return "WM8962"
+	}
+	return ""
+}
 
 // HasMicrophone is whether the device can hear: every Show but the Skylight, which was built
 // without microphones.
@@ -121,8 +153,8 @@ func Show8() bool { return Crown() || Athena() }
 // 1st gen Show 5. That is the safer way to be wrong about a Show 8, which shares its mute driver
 // and its speaker codec and differs mainly in the panel and the microphone count.
 //
-// The 2nd gen Show 8 and the Skylight come first, from their device trees: neither kernel names a
-// panel on its command line.
+// The 2nd gen Show 8, the Skylight and the Surface RT come first, from their device trees: none of
+// their kernels names a panel on its command line.
 func showBoard(cmdline, gating string, compatible []string) string {
 	for _, c := range compatible {
 		if c == athenaCompatible || strings.HasPrefix(c, athenaCompatible+"-") {
@@ -130,6 +162,9 @@ func showBoard(cmdline, gating string, compatible []string) string {
 		}
 		if c == skylightCompatible {
 			return boardSkylight
+		}
+		if c == surfaceRTCompatible {
+			return boardSurfaceRT
 		}
 	}
 	for _, f := range strings.Fields(cmdline) {

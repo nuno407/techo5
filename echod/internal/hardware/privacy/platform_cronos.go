@@ -166,6 +166,10 @@ func platformMute() (Mute, error) {
 		// No microphone, so no latch and nothing to mute.
 		return nil, fmt.Errorf("privacy: this device has no microphone to mute")
 	}
+	if layout.SurfaceRT() {
+		// No latch: the mute is the daemon's own (software.go).
+		return software{}, nil
+	}
 	if layout.AthenaMainline() {
 		return mainlineMute{}, nil
 	}
@@ -187,6 +191,11 @@ func reads(path, value string) (bool, error) {
 	return strings.TrimSpace(string(b)) == value, nil
 }
 
-// Nothing to seed: the hardware holds the microphones, and the saved state reaches the latch through
-// the mute feature. See privacy.Seed.
-func seedSoftwareCut(bool) {}
+// Nothing to seed where the hardware holds the microphones: the saved state reaches the latch through
+// the mute feature. The Surface RT's cut is the daemon's own, so there, as on the Spot, a mute saved
+// from last time is in force before capture opens. See privacy.Seed.
+func seedSoftwareCut(muted bool) {
+	if layout.SurfaceRT() {
+		softwareCut.Store(muted)
+	}
+}

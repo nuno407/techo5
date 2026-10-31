@@ -64,6 +64,7 @@ type sensorSpec struct {
 	pedestal   int  // the sensor's black level a pixel, taken off before white balance
 	blueFirst  bool // the first pixel of each cell is blue, not red
 	v4l2       bool // driven through V4L2 on a mainline kernel (camera_v4l2.go)
+	srt        bool // the Surface RT's tegra-video node (camera_srt.go)
 }
 
 // hasOV9734 is whether this board carries the OV9734 rather than the OV02B10.
@@ -87,6 +88,9 @@ var athenaSensor = sensorSpec{w: 2112, h: 1568, outW: 1056, outH: 784, minShut: 
 	maxShut: 3200, blackCap: 144, pedestal: 64, blueFirst: true, v4l2: true}
 
 func boardSensor() sensorSpec {
+	if layout.SurfaceRT() {
+		return srtSensor
+	}
 	if layout.AthenaMainline() {
 		return athenaSensor
 	}
@@ -113,6 +117,9 @@ var sensor = boardSensor()
 // gen Show 8 on Amazon's own kernel has neither path TECHO5 knows (its MT8183 ISP is not the
 // MT8163's this file programs), so it answers here too, with no camera.
 func v4l2Board() (bool, bool) {
+	if sensor.srt {
+		return true, srtAvailable()
+	}
 	if layout.Athena() && !sensor.v4l2 {
 		return true, false
 	}
@@ -278,6 +285,7 @@ type device struct {
 	mclk           [3]uint32
 	sensorOpen     bool
 	v              *v4l2Cam // the mainline kernel's chain (athena); none of the above is used then
+	s              *srtCam  // the Surface RT's (camera_srt.go); none of the above either
 
 	// Exposure control: what is set on the sensor now, and frames to wait before judging it.
 	shutter, gain int
@@ -287,6 +295,15 @@ type device struct {
 func open() (*device, error) {
 	d := &device{isp: -1, sens: -1, ion: -1}
 	var err error
+	if sensor.srt {
+		if d.s, err = openSRT(); err != nil {
+			return nil, err
+		}
+		d.shutter, d.gain = srtFrameLines/2, 128
+		d.s.exposure(d.shutter, d.gain)
+		d.settle = aeDelay
+		return d, nil
+	}
 	if sensor.v4l2 {
 		if d.v, err = openV4L2(); err != nil {
 			return nil, err
@@ -452,6 +469,8 @@ func (d *device) setExposure(shutter, gain, mean int) {
 		return
 	}
 	switch {
+	case d.s != nil:
+		d.s.exposure(shutter, gain)
 	case d.v != nil:
 		d.v.exposure(shutter, gain)
 	default:
@@ -467,6 +486,10 @@ func (d *device) setExposure(shutter, gain, mean int) {
 }
 
 func (d *device) close() {
+	if d.s != nil {
+		d.s.close()
+		return
+	}
 	if d.v != nil {
 		d.v.close()
 		return
@@ -674,6 +697,10 @@ func teardownCSI2(s, ana *mmio) {
 // with interrupts masked; on every tick the DMA is aimed at the next slot, so the one it just
 // left is whole and stays untouched for slots-1 more periods.
 func (d *device) stream(stop chan struct{}, frame func(bayer []byte)) {
+	if d.s != nil {
+		d.s.stream(stop, frame)
+		return
+	}
 	if d.v != nil {
 		d.v.stream(stop, frame)
 		return

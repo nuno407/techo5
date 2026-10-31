@@ -44,8 +44,8 @@ func present(path string) bool {
 	return err == nil
 }
 
-// softwareCut is set by a device whose mute exists only in software (the Echo Spot); nothing else
-// ever sets it.
+// softwareCut is set by a device whose mute exists only in software (the Echo Spot, the Surface
+// RT); nothing else ever sets it.
 var softwareCut atomic.Bool
 
 // SoftwareCut reports whether the capture source must hand on silence because a software-only mute

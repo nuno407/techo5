@@ -37,6 +37,9 @@ func panelSize() (w, h int) {
 	case layout.Skylight():
 		// The Skylight Calendar 15: a 1920x1080 landscape panel.
 		return 1920, 1080
+	case layout.SurfaceRT():
+		// The Surface RT: a 1366x768 landscape panel.
+		return 1366, 768
 	case layout.Show8():
 		return 1280, 800
 	}

@@ -28,27 +28,36 @@ import "github.com/HuskerMinion/techo5/echod/internal/layout"
 // the unit on 2026-10-17 by tapping the corners: top left (18, 55), top right (1887, 38), bottom
 // left (34, 1159), bottom right (1886, 1179), so landscape and the right way round as it is.
 //
-// These are variables rather than constants because one build serves all five screens and the
+// The Surface RT's touchscreen is an Atmel maXTouch behind HID over I2C ("hid-over-i2c 03EB:8207",
+// hid-multitouch, five slots, protocol B). It reports 0 to 4095 on both axes, the HID digitizer's
+// logical range over the whole 1366 by 768 landscape screen, so its ranges are square and say nothing
+// of the panel's orientation: reportsLandscape tells toFrame not to turn it. Ranges read on the unit
+// with evtest on 2026-10-30.
+//
+// These are variables rather than constants because one build serves all six screens and the
 // board is only known at run time; nothing outside this package reads them.
 var (
-	deviceName = onBoard("goodix-ts", "fts_ts", "Goodix Capacitive TouchScreen")
+	deviceName = onBoard("goodix-ts", "fts_ts", "Goodix Capacitive TouchScreen", "hid-over-i2c 03EB:8207")
 
 	// Width and Height are the frame coordinates are reported in.
-	Width  = onBoard(960, 1280, 1920)
-	Height = onBoard(480, 800, 1080)
+	Width  = onBoard(960, 1280, 1920, 1366)
+	Height = onBoard(480, 800, 1080, 768)
 
 	// rawFallbackW and rawFallbackH stand in when the driver will not say what its axes run to.
-	rawFallbackW = onBoard(480, 800, 1920)
-	rawFallbackH = onBoard(960, 1280, 1200)
+	rawFallbackW = onBoard(480, 800, 1920, 4096)
+	rawFallbackH = onBoard(960, 1280, 1200, 4096)
+
+	// reportsLandscape is a controller that reports the landscape frame whatever its ranges look like.
+	reportsLandscape = onBoard(false, false, false, true)
 
 	// tapMove is how far a finger may wander and still be a tap, in frame pixels, so the Show 8's
 	// larger screen gets the same allowance in proportion. Not yet re-measured on a Show 8: the
 	// Spot's comment records that a still finger on that controller drifts, and a FocalTech may
 	// differ from a Goodix.
-	tapMove = onBoard(24, 32, 48)
+	tapMove = onBoard(24, 32, 48, 34)
 
 	// notch is the vertical travel per volume step, scaled the same way.
-	notch = onBoard(40, 56, 80)
+	notch = onBoard(40, 56, 80, 57)
 )
 
 const (
@@ -56,10 +65,12 @@ const (
 	holdGestures = false
 )
 
-// onBoard picks the value for this screen: both Show 5 generations, both Show 8 generations, or the
-// Skylight.
-func onBoard[T any](show5, show8, skylight T) T {
+// onBoard picks the value for this screen: both Show 5 generations, both Show 8 generations, the
+// Skylight, or the Surface RT.
+func onBoard[T any](show5, show8, skylight, surfaceRT T) T {
 	switch {
+	case layout.SurfaceRT():
+		return surfaceRT
 	case layout.Skylight():
 		return skylight
 	case layout.Show8():
@@ -69,9 +80,10 @@ func onBoard[T any](show5, show8, skylight T) T {
 }
 
 // toFrame turns a reading into frame coordinates. A controller whose axes run portrait, the panel's
-// own way, is turned a quarter; one that already reports landscape (athena's) is only scaled.
+// own way, is turned a quarter; one that already reports landscape (athena's, or the Surface RT's
+// square one: reportsLandscape) is only scaled.
 func toFrame(rawW, rawH, rx, ry int) (x, y int) {
-	if rawW > rawH {
+	if rawW > rawH || reportsLandscape {
 		x = rx * Width / max(rawW, 1)
 		y = ry * Height / max(rawH, 1)
 		return x, y

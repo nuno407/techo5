@@ -9,6 +9,12 @@ func AthenaMainline() bool { return false }
 // runs the Show build.
 func Skylight() bool { return false }
 
+// SurfaceRT is never true on a Dot, a Spot or a panel.
+func SurfaceRT() bool { return false }
+
+// SoundCard: every Dot, Spot and panel plays on card 0.
+func SoundCard() string { return "" }
+
 // HasMicrophone: every Dot and Spot has its microphones, and a panel gets
 // its microphone from the app.
 func HasMicrophone() bool { return true }

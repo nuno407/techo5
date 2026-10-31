@@ -14,6 +14,9 @@ type Screen struct {
 	W, H    int
 	Rotated bool
 	PixFmt  string
+	// Planes is whether the screen shows the hardware decoder's YUV pictures on a plane of their own
+	// (hardware/screen.PresentYUV): the Surface RT's KMS.
+	Planes bool
 }
 
 // Fit is where the picture goes on the canvas: W×H at X, Y, the rest black. All even, which the

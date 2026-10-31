@@ -1,4 +1,4 @@
-//go:build spot
+//go:build !dot && !panel
 
 package privacy
 
@@ -6,6 +6,8 @@ import "time"
 
 // The Echo Spot on LineageOS's kernel has no privacy driver: the mute button is the keypad's power
 // key and nothing in the hardware cuts the microphones (techo5-spot docs/hardware.md, "Mute button").
+// The Surface RT has neither a mute button nor a switch, so its mute is this one too, set from Home
+// Assistant or the screen.
 // The cut is the daemon's own (a panel's is in platform_panel.go, beside its physical cut): while muted, the capture source hands on silence from the moment a frame
 // leaves the device (SoftwareCut, read in hardware/mic), so wake detection, the pre-roll history and
 // anything streamed all hear nothing. It is as strong as the daemon, and no stronger.

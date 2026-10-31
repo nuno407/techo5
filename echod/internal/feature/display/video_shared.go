@@ -134,7 +134,7 @@ func (p *videoPainter) paint(ctx context.Context, dev *screen.Device, poke <-cha
 			video.Get().Done(fr)
 			continue
 		case fr != nil:
-			if err := dev.PresentFrame(fr.Pix, over); err != nil {
+			if err := presentVideoFrame(dev, fr, over); err != nil {
 				slog.Warn("presenting a video frame failed", "err", err)
 			}
 			video.Get().Done(p.last)
@@ -143,11 +143,13 @@ func (p *videoPainter) paint(ctx context.Context, dev *screen.Device, poke <-cha
 		case redraw && !p.dark:
 			// The frame on the panel again, with the controls as they are now; black under them when
 			// there is none to hand (the page has just been uncovered), never the page that was over it.
-			pix := p.blackFrame(dev)
+			var err error
 			if p.last != nil {
-				pix = p.last.Pix
+				err = presentVideoFrame(dev, p.last, over)
+			} else {
+				err = dev.PresentFrame(p.blackFrame(dev), over)
 			}
-			if err := dev.PresentFrame(pix, over); err != nil {
+			if err != nil {
 				slog.Warn("presenting a video frame failed", "err", err)
 			}
 			redraw = false
@@ -170,11 +172,22 @@ func (p *videoPainter) paint(ctx context.Context, dev *screen.Device, poke <-cha
 	}
 }
 
+// presentVideoFrame puts a video frame on the panel: a hardware decoder's picture on its plane, any
+// other as a frame in the panel's pixels.
+func presentVideoFrame(dev *screen.Device, fr *video.Frame, over image.Rectangle) error {
+	if fr.YUV {
+		return dev.PresentYUV(fr.Pix, fr.W, fr.H, fr.Dst, over)
+	}
+	return dev.PresentFrame(fr.Pix, over)
+}
+
 // videoShot is a screenshot of the video page: the frame on the panel turned back to the canvas's
 // way up, with the canvas (the controls) over it.
 func (p *videoPainter) shot(dev *screen.Device, canvas *image.RGBA) *image.RGBA {
 	img := image.NewRGBA(canvas.Rect)
-	if fr := p.last; fr != nil && dev != nil {
+	if fr := p.last; fr != nil && fr.YUV {
+		yuvShot(img, fr)
+	} else if fr != nil && dev != nil {
 		pw, ph := dev.FrameSize()
 		bgra := dev.PixFmt() == "bgra"
 		w, h := img.Rect.Dx(), img.Rect.Dy()
@@ -211,4 +224,26 @@ func (p *videoPainter) shot(dev *screen.Device, canvas *image.RGBA) *image.RGBA 
 		}
 	}
 	return img
+}
+
+// yuvShot draws a hardware decoder's I420 picture into its place on img, nearest pixel, for a
+// screenshot: the panel's plane scales it, and nothing else has it in RGB.
+func yuvShot(img *image.RGBA, fr *video.Frame) {
+	dst := fr.Dst.Intersect(img.Rect)
+	ys, cs := (fr.W+3)&^3, ((fr.W+1)/2+3)&^3
+	uOff := ys * fr.H
+	vOff := uOff + cs*((fr.H+1)/2)
+	if dst.Empty() || len(fr.Pix) < vOff+cs*((fr.H+1)/2) {
+		return
+	}
+	for y := dst.Min.Y; y < dst.Max.Y; y++ {
+		sy := (y - fr.Dst.Min.Y) * fr.H / fr.Dst.Dy()
+		for x := dst.Min.X; x < dst.Max.X; x++ {
+			sx := (x - fr.Dst.Min.X) * fr.W / fr.Dst.Dx()
+			c := color.YCbCr{Y: fr.Pix[sy*ys+sx], Cb: fr.Pix[uOff+sy/2*cs+sx/2], Cr: fr.Pix[vOff+sy/2*cs+sx/2]}
+			r, g, b, _ := c.RGBA()
+			o := img.PixOffset(x, y)
+			img.Pix[o], img.Pix[o+1], img.Pix[o+2], img.Pix[o+3] = uint8(r>>8), uint8(g>>8), uint8(b>>8), 255
+		}
+	}
 }

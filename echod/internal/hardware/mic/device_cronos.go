@@ -86,7 +86,7 @@ func onShow8[T any](show5, show8 T) T {
 // converter is another part with controls of its own (athenaControls).
 var adcs = func() []string {
 	switch {
-	case layout.Athena(), layout.Skylight():
+	case layout.Athena(), layout.Skylight(), layout.SurfaceRT():
 		return nil
 	case layout.Crown():
 		return []string{"A", "B"}
@@ -100,13 +100,14 @@ var adcs = func() []string {
 // the microphone.
 var ErrNoMicrophone = errors.New("mic: this device has no microphone")
 
-// openDevice is the capture as the reader sees it: on athena the two devices made into one frame,
-// anywhere else the one device.
+// openDevice is the capture as the reader sees it: on athena the two devices made into one frame, on
+// the Surface RT its two microphones with the software reference beside them (athena.go,
+// surfaceRTKernel), anywhere else the one device.
 func openDevice() (capture, error) {
 	if layout.Skylight() {
 		return nil, ErrNoMicrophone
 	}
-	if layout.Athena() {
+	if layout.Athena() || layout.SurfaceRT() {
 		return openAthena()
 	}
 	return openPlain()

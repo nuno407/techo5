@@ -150,8 +150,11 @@ const athenaGainControl = "Ch%d Gain A"
 type athenaKernel struct {
 	micDevice   int
 	micChannels int
-	micFull     float32
-	refDevice   int // -1: none
+	// micBits is the microphones' sample width: 32 (S32_LE) on athena, where zero means it, and 16
+	// (S16_LE) on the Surface RT.
+	micBits   int
+	micFull   float32
+	refDevice int // -1: none
 	// refName is the reference's PCM id as the kernel lists it (/proc/asound), checked before it is
 	// opened, so an older kernel's device at that number is never taken for it. Empty: not checked.
 	refName string
@@ -244,10 +247,45 @@ var athenaMainlineKernel = athenaKernel{
 	boostDB:  athenaMicBoostDB,
 }
 
+// surfaceRTControls are the Surface RT's WM8962 set up for its two digital microphones, as its
+// postmarketOS image does it (surface_rt tools/srt-audio-defaults and the UCM profile): the input on
+// the DMIC pins ("Input Mode" Digital; the analog inputs are not wired), the internal microphone
+// switch, the high-pass filter in its Application mode at cutoff 2 (about 100 Hz, which takes the DC
+// and the rumble off), and the digital capture volume at +21 dB (124; 96 is 0 dB, 0.75 dB a step).
+var surfaceRTControls = []athenaControl{
+	{"Input Mode", 1},
+	{"Int Mic Switch", 1},
+	{"Capture HPF Switch", 1},
+	{"Capture HPF Mode", 1},
+	{"Capture HPF Cutoff", 2},
+	{"Digital Capture Volume", 124},
+}
+
+// surfaceRTKernel is the Surface RT read the same way as athena: one capture device on the WM8962's
+// card (Card), two microphones in S16_LE, and no loopback in the hardware at all, so the reference is
+// always lib/echoref's. The capture runs at the speaker's 48 kHz, which the Tegra I2S shares between
+// the two directions, and the decimators bring it to Rate. The levels are not tuned yet.
+var surfaceRTKernel = athenaKernel{
+	micDevice:   0,
+	micChannels: 2,
+	micBits:     16,
+	micFull:     1 << 15,
+	refDevice:   -1,
+	controls:    surfaceRTControls,
+	softRef:     true,
+	micRates:    []int{48000},
+	refRate:     48000,
+	// Nothing holds the rings short here, as Amazon's drivers do athena's: 80 ms of capture.
+	micPeriods: 8,
+}
+
 // athenaRunning is the kernel this unit is on; a workstation reads as Amazon's.
 func athenaRunning() *athenaKernel {
 	if boardKernel != nil {
 		return boardKernel
+	}
+	if layout.SurfaceRT() {
+		return &surfaceRTKernel
 	}
 	if layout.AthenaMainline() {
 		return &athenaMainlineKernel
@@ -347,11 +385,15 @@ func openAthena() (capture, error) {
 	var err error
 	micRate := 0
 	for _, rate := range rates {
+		format := alsa.FormatS32_LE
+		if k.bits() == 16 {
+			format = alsa.FormatS16_LE
+		}
 		mics, err = alsa.OpenPrepared(Card, k.micDevice, alsa.Config{
 			Channels:   k.micChannels,
 			Rate:       rate,
-			Format:     alsa.FormatS32_LE,
-			Bits:       athenaMicBits,
+			Format:     format,
+			Bits:       k.bits(),
 			PeriodSize: rate / 100,
 			Periods:    periodsOr(k.micPeriods, athenaMicPeriods),
 		})
@@ -423,6 +465,14 @@ func openAthenaRef(k *athenaKernel) *alsa.Capture {
 		return nil
 	}
 	return ref
+}
+
+// bits is the microphones' sample width.
+func (k *athenaKernel) bits() int {
+	if k.micBits > 0 {
+		return k.micBits
+	}
+	return athenaMicBits
 }
 
 // periodsOr is n, or athena's own count where the kernel sets none.
@@ -519,7 +569,7 @@ func (c *pairedCapture) Read(buf []byte) (int, error) {
 		return 0, fmt.Errorf("buffer smaller than one frame (%d bytes)", frameBytes)
 	}
 
-	micBytes := frames * (c.micRate / Rate) * c.k.micChannels * athenaMicBits / 8
+	micBytes := frames * (c.micRate / Rate) * c.k.micChannels * c.k.bits() / 8
 	if len(c.micBuf) < micBytes {
 		c.micBuf = make([]byte, micBytes)
 	}
@@ -596,11 +646,18 @@ func (c *pairedCapture) convert(out, mics, ref []byte) {
 	frames := len(out) / frameBytes
 
 	f := 0
-	step := c.k.micChannels * 4
+	width := c.k.bits() / 8
+	step := c.k.micChannels * width
+	sample := func(b []byte) float32 {
+		if width == 2 {
+			return float32(int16(binary.LittleEndian.Uint16(b)))
+		}
+		return float32(int32(binary.LittleEndian.Uint32(b)))
+	}
 	if c.micDec == nil { // the converter's own 16 kHz: a frame in is a frame out
 		for at := 0; at+step <= len(mics) && f < frames; at, f = at+step, f+1 {
 			for ch := range c.k.micChannels {
-				y := float32(int32(binary.LittleEndian.Uint32(mics[at+4*ch:]))) / c.k.micFull * c.boost
+				y := sample(mics[at+width*ch:]) / c.k.micFull * c.boost
 				putS24(out[f*frameBytes+3*ch:], y)
 				c.meter.mic[ch] += float64(y) * float64(y)
 				c.meter.micPeak[ch] = max(c.meter.micPeak[ch], abs32(y))
@@ -610,7 +667,7 @@ func (c *pairedCapture) convert(out, mics, ref []byte) {
 	for at := 0; c.micDec != nil && at+step <= len(mics) && f < frames; at += step {
 		var ready bool
 		for ch, d := range c.micDec {
-			x := float32(int32(binary.LittleEndian.Uint32(mics[at+4*ch:]))) / c.k.micFull
+			x := sample(mics[at+width*ch:]) / c.k.micFull
 			y, ok := d.Push(x * c.boost)
 			if ok {
 				putS24(out[f*frameBytes+3*ch:], y)

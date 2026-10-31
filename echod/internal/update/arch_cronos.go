@@ -8,10 +8,12 @@ import "github.com/HuskerMinion/techo5/echod/internal/layout"
 // architecture name.
 const archSuffix = ""
 
-// onAthena and onSkylight are the layout's, variables so a test can stand on another board.
+// onAthena, onSkylight and onSurfaceRT are the layout's, variables so a test can stand on another
+// board.
 var (
-	onAthena   = layout.Athena
-	onSkylight = layout.Skylight
+	onAthena    = layout.Athena
+	onSkylight  = layout.Skylight
+	onSurfaceRT = layout.SurfaceRT
 )
 
 // rootfsArch is the key this device's root filesystem is published under in a manifest's Rootfs.
@@ -27,8 +29,13 @@ var (
 // The Skylight Calendar 15 is keyed the same way, "arm-skylight": the Show's arm daemon on TECHO5's
 // mainline RK3566 kernel, booted from a store in what was Android's userdata. No other Show's rootfs
 // may land on it, nor its on them.
+//
+// The Surface RT is keyed "arm-surface-rt", which no release carries: it runs postmarketOS, not a
+// TECHO5 rootfs, so there is never one to take. It takes no binary either (Published).
 func rootfsArch() string {
 	switch {
+	case onSurfaceRT():
+		return arch + "-surface-rt"
 	case onAthena():
 		return arch + "-athena"
 	case onSkylight():

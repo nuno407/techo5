@@ -13,7 +13,8 @@
 // color counts and no lux, so it is polled and converted here (iio.go). So is the Skylight Calendar's
 // EM3071X, which has no driver at all and is read over I2C (em3071x.go). The Echo Show 5 on TECHO5's
 // mainline kernel has no misc node either: its JSA1214 is an IIO device that reports lux with its own
-// scale, so it is polled through metrics (metricsLux).
+// scale, so it is polled through metrics (metricsLux), and so is the Surface RT's, the HID sensor
+// hub's "als".
 package ambient
 
 import (

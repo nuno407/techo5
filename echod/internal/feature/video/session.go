@@ -5,6 +5,7 @@ package video
 import (
 	"context"
 	"errors"
+	"image"
 	"io"
 	"log/slog"
 	"net/url"
@@ -40,6 +41,12 @@ type Frame struct {
 	Pix []byte
 	N   int
 
+	// YUV is a picture from the hardware decoder (hw.go): Pix is I420, W×H, to be shown scaled into Dst
+	// on the panel (hardware/screen.PresentYUV), not a frame in the panel's own pixels.
+	YUV  bool
+	W, H int
+	Dst  image.Rectangle
+
 	owner *session
 }
 
@@ -66,7 +73,8 @@ type session struct {
 	info    Info
 	rate    Rate
 	dec     *decoder
-	ready   []*Frame // decoded, oldest first
+	hw      *hwPicture // the hardware's pictures (hw.go); nil while the cores decode
+	ready   []*Frame   // decoded, oldest first
 	free    []*Frame
 	made    int  // frames there are buffers for
 	most    int  // frames there may be
@@ -190,22 +198,29 @@ func (s *session) play(insecure bool) (error, bool) {
 		"probed in", time.Since(began).Round(time.Millisecond))
 	s.changed()
 
-	dec, err := start(s.ctx, DecodeArgs(Decoding{URL: s.u.String(), Info: info, Screen: s.screen, CAFile: caFileIf(), Insecure: insecure, Proxy: proxy}), true, s.sound)
-	if err != nil {
-		return err, false
+	decoding := Decoding{URL: s.u.String(), Info: info, Screen: s.screen, CAFile: caFileIf(), Insecure: insecure, Proxy: proxy}
+	var dec, gst *decoder
+	var readErr error
+	hw := false
+	if hwWanted(info, s.screen) {
+		hw, readErr, dec, gst = s.playHW(info, decoding)
+		if s.ctx.Err() != nil {
+			stopAll(gst)
+			return nil, false
+		}
 	}
-	s.mu.Lock()
-	s.dec = dec
-	s.mu.Unlock()
-
-	if s.sound {
-		src := &soundSource{f: dec.audio, s: s, quit: make(chan struct{})}
+	if !hw {
+		dec, err = start(s.ctx, DecodeArgs(decoding), true, s.sound)
+		if err != nil {
+			return err, false
+		}
 		s.mu.Lock()
-		s.src = src
+		s.dec = dec
 		s.mu.Unlock()
-		safe.Go("video sound", src.begin)
+		s.startSound(dec)
+		readErr = s.readFrames(dec.video)
 	}
-	readErr := s.readFrames(dec.video)
+	defer stopAll(gst)
 	if s.ctx.Err() != nil {
 		return nil, false
 	}
@@ -235,6 +250,8 @@ func (s *session) play(insecure bool) (error, bool) {
 		return nil, false
 	case readErr != nil && !errors.Is(readErr, io.EOF):
 		return readErr, false
+	case read == 0 && gst != nil:
+		return hwWhy(gst, dec), false
 	case read == 0 || dec.err != nil:
 		// No picture at all, or the decoder failed partway (a connection lost, a stream it could not
 		// read): not a video that played to its end.
@@ -243,9 +260,31 @@ func (s *session) play(insecure bool) (error, bool) {
 	return nil, true
 }
 
+// startSound plays the decoder's sound, where the video has any.
+func (s *session) startSound(dec *decoder) {
+	if !s.sound {
+		return
+	}
+	src := &soundSource{f: dec.audio, s: s, quit: make(chan struct{})}
+	s.mu.Lock()
+	s.src = src
+	s.mu.Unlock()
+	safe.Go("video sound", src.begin)
+}
+
+// frameBytes is one picture's size on the pipe: the panel's frame, or the hardware's I420 picture.
+func (s *session) frameBytes() int {
+	if s.hw != nil {
+		return s.hw.size
+	}
+	return FrameBytes(s.panelW, s.panelH)
+}
+
 // readFrames reads the picture off its pipe until it ends.
 func (s *session) readFrames(r *os.File) error {
-	size := FrameBytes(s.panelW, s.panelH)
+	s.mu.Lock()
+	size, hw := s.frameBytes(), s.hw
+	s.mu.Unlock()
 	stats := time.NewTicker(statsEvery)
 	defer stats.Stop()
 	shown, dropped := 0, 0
@@ -263,6 +302,9 @@ func (s *session) readFrames(r *os.File) error {
 		}
 		s.mu.Lock()
 		fr.N = s.read
+		if hw != nil {
+			fr.YUV, fr.W, fr.H, fr.Dst = true, hw.w, hw.h, hw.dst
+		}
 		s.read++
 		s.ready = append(s.ready, fr)
 		first := !s.playing
@@ -306,7 +348,7 @@ func (s *session) buffer() *Frame {
 		}
 		if s.made < s.most {
 			s.made++
-			return &Frame{Pix: make([]byte, FrameBytes(s.panelW, s.panelH))}
+			return &Frame{Pix: make([]byte, s.frameBytes())}
 		}
 		// Full. Waiting is right while the clock moves or the video is paused; full with the clock
 		// standing still, the decoder is waiting on these frames to make the sound that would move

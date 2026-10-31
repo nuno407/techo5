@@ -2,6 +2,8 @@
 
 package buttons
 
+import "github.com/HuskerMinion/techo5/echod/internal/layout"
+
 // longHoldAfter is zero: the Show's screen is where pairing and everything else is asked for.
 const longHoldAfter = 0
 
@@ -13,11 +15,24 @@ const longHoldAfter = 0
 // mute button in gpio-keys as KEY_MICMUTE (248), so nothing on the system takes it for a power key.
 // None of the Shows on Amazon's kernels reports 248. The latch still moves in hardware there, so the
 // mute feature follows it as on the 2nd gen Show 5 (privacy's mainlineMute).
-var codes = map[uint16]Name{
-	114: VolumeDown,
-	115: VolumeUp,
-	116: Mute,
-	248: Mute,
+//
+// The Surface RT has no mute button. Its gpio-keys carries the volume keys, the power key (KEY_POWER,
+// 116) and the Windows button under the screen (KEY_LEFTMETA, 125), so there only the volume is read:
+// the power key would otherwise toggle the mute, and stays logind's (or nobody's, with
+// HandlePowerKey=ignore). A Type Cover's own volume keys send the same two codes and turn the volume as
+// well; nothing else it sends is a button.
+var codes = showCodes(layout.SurfaceRT())
+
+func showCodes(surfaceRT bool) map[uint16]Name {
+	if surfaceRT {
+		return map[uint16]Name{114: VolumeDown, 115: VolumeUp}
+	}
+	return map[uint16]Name{
+		114: VolumeDown,
+		115: VolumeUp,
+		116: Mute,
+		248: Mute,
+	}
 }
 
 // notButtons are input devices that are not buttons, by name, though they declare key codes. The Show

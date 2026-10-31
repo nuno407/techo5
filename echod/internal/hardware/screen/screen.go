@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
@@ -125,6 +126,10 @@ type Device struct {
 	gpu     *gpu.Display
 	gpuPath gpuState
 
+	// kms is the panel through DRM/KMS (kms.go), where the board takes it: two pages flipped at
+	// vblank in place of the framebuffer's one. nil on the framebuffer.
+	kms *kmsOut
+
 	// tint is what the panel is shown with (tint.go); on the framebuffer tintTable applies it to a
 	// copy of each frame, tintImg.
 	tint       Tint
@@ -144,8 +149,16 @@ func (d *Device) SetFilter(name string, f func(row []byte, y int)) { d.filter.se
 // source is what Present sends: the canvas, or the canvas through the filter.
 func (d *Device) source() *image.RGBA { return d.filter.over(d.canvas) }
 
-// Open maps the framebuffer and reads its geometry.
+// Open maps the framebuffer and reads its geometry. On the Surface RT it takes the panel through KMS
+// instead, two pages flipped at vblank (kms.go), and falls back on the framebuffer if it cannot.
 func Open() (*Device, error) {
+	if useKMS() {
+		d, err := openKMSDevice()
+		if err == nil {
+			return d, nil
+		}
+		slog.Warn("screen: no KMS; drawing on the framebuffer", "err", err)
+	}
 	f, err := os.OpenFile(devPath, os.O_RDWR, 0)
 	if err != nil {
 		if f, err = os.OpenFile(altPath, os.O_RDWR, 0); err != nil {
@@ -183,8 +196,8 @@ func Open() (*Device, error) {
 	// On TECHO5's mainline kernel /dev/fb0 can be DRM's fbdev emulation (mediatek-drm), which sets no
 	// mode of its own while there is no console on it: unblanking does, so the panel shows this buffer
 	// even before the first pan. simple-framebuffer has no blank operation and says EINVAL; that is fine.
-	// The Skylight's rockchip-drm fbdev emulation is the same kind.
-	if layout.AthenaMainline() || layout.Skylight() {
+	// The Skylight's rockchip-drm fbdev emulation is the same kind, and so is the Surface RT's tegra-drm.
+	if layout.AthenaMainline() || layout.Skylight() || layout.SurfaceRT() {
 		_ = ioctl(f.Fd(), fbioBlank, nil)
 	}
 
@@ -239,6 +252,9 @@ func (d *Device) Canvas() *image.RGBA { return d.canvas }
 
 // String describes the framebuffer, for the log.
 func (d *Device) String() string {
+	if d.kms != nil {
+		return fmt.Sprintf("KMS %s, %dx%d panel, %d pages, %d bytes/line", d.kms, d.panelW, d.panelH, d.pages, d.line)
+	}
 	return fmt.Sprintf("%dx%d panel, %d pages, %d bytes/line, rgba at %d/%d/%d/%d",
 		d.panelW, d.panelH, d.pages, d.line, d.shift[0], d.shift[1], d.shift[2], d.shift[3])
 }
@@ -302,11 +318,15 @@ func (d *Device) settle() error {
 
 // present puts img on the page not on show, and shows it.
 func (d *Device) present(img *image.RGBA) error {
+	d.leaveVideoFor()
 	next := d.page
 	if d.pages > 1 {
 		next = (d.page + 1) % d.pages
 	}
-	dst := d.mem[next*d.pageBytes : (next+1)*d.pageBytes]
+	dst, err := d.pageFor(next)
+	if err != nil {
+		return err
+	}
 
 	w, h := img.Rect.Dx(), img.Rect.Dy()
 	sr, sg, sb, sa := d.shift[0], d.shift[1], d.shift[2], d.shift[3]
@@ -495,9 +515,16 @@ func words(b []byte) []uint32 {
 // and no pan operation (FBIOPAN_DISPLAY gives EINVAL): there it scans out what was written. DRM's
 // fbdev emulation (mediatek-drm) has two pages and pans with an atomic commit, at the next vblank.
 // On the Echo Show 5's mainline kernel that emulation has a single page, where a pan to the page on
-// show is only a wasted commit.
+// show is only a wasted commit, and so has the Surface RT's tegra-drm.
 func (d *Device) pan(next int) error {
-	if d.pages <= 1 && (layout.AthenaMainline() || layout.CronosMainline()) {
+	if d.kms != nil {
+		if err := d.kms.show(next); err != nil {
+			return err
+		}
+		d.page = next
+		return nil
+	}
+	if d.pages <= 1 && (layout.AthenaMainline() || layout.CronosMainline() || layout.SurfaceRT()) {
 		d.page = 0
 		return nil
 	}
@@ -519,6 +546,9 @@ func (d *Device) pan(next int) error {
 // Close unmaps and closes the framebuffer. The last frame stays on the panel.
 func (d *Device) Close() error {
 	_ = d.settle()
+	if d.kms != nil {
+		d.leaveKMS()
+	}
 	if d.gpuPath.disp != nil {
 		d.gpuPath.disp.Release(errors.New("screen: closed"))
 		d.gpu = nil
@@ -588,6 +618,10 @@ func skylightRaw(level, top int) int {
 	return min(max(level*top/BacklightMax, 2*skylightNight), top)
 }
 
+// The Surface RT's backlight (a pwm-backlight on mainline) has 254 steps, read from max_brightness as
+// well; the level is spread over them as on any board.
+const surfaceRTBacklightDir = "/sys/class/backlight/backlight"
+
 // The Echo Show 5 on TECHO5's mainline kernel has no LED class node either: its display PWM is a
 // backlight class device whose range is read from max_brightness.
 const cronosBacklightDir = "/sys/class/backlight/display-backlight"
@@ -598,6 +632,9 @@ func backlightNode() (path string, top int) {
 	}
 	if layout.Skylight() {
 		return skylightBacklightDir + "/brightness", readTop(skylightBacklightDir+"/max_brightness", skylightBacklightMax)
+	}
+	if layout.SurfaceRT() {
+		return surfaceRTBacklightDir + "/brightness", readTop(surfaceRTBacklightDir+"/max_brightness", BacklightMax)
 	}
 	if _, err := os.Stat(backlightPath); os.IsNotExist(err) {
 		if top := readTop(cronosBacklightDir+"/max_brightness", 0); top > 0 {

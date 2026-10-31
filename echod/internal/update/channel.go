@@ -1,5 +1,7 @@
 package update
 
+import "github.com/HuskerMinion/techo5/echod/internal/layout"
+
 // Channel is which stream of releases a device follows. The URLs are compiled in rather than
 // configured, so Home Assistant can move a device between our own streams but cannot aim it at
 // somebody else's binary — the device runs this as root, and a text field would be a way to replace it.
@@ -41,8 +43,10 @@ func (c Channel) URL() string {
 }
 
 // Published is whether this build has releases to check at all: a panel's daemon comes inside its
-// app, which updates itself.
-func Published() bool { return releases != "" }
+// app, which updates itself. Nor does the Surface RT follow them: its daemon is built for it and
+// installed by hand, and the Show's arm binary in a release, which does not know the board, would
+// replace it.
+func Published() bool { return releases != "" && !layout.SurfaceRT() }
 
 // Channels is every channel, in the order Home Assistant should offer them.
 func Channels() []Channel { return []Channel{Stable, Dev} }

@@ -118,6 +118,9 @@ type Display struct {
 	// camButtons is the camera page's action buttons between taps: the one armed (camera_buttons.go).
 	camButtons cameraButtons
 
+	// boards is the Work and Sky boards between frames (boards.go).
+	boards boardState
+
 	// holdsMu makes reading whether holds are wanted and telling the touchscreen one step (applyHolds).
 	holdsMu sync.Mutex
 
@@ -914,6 +917,7 @@ func (d *Display) changed(s voice.State) {
 			d.closeAlert()
 			d.sheet, d.quiet = false, true
 			d.dash, d.deckUp = false, false
+			d.boards.up = ""
 			go home.Get().HideCamera()
 			go d.endMusic()
 			slog.Info("screen: home by voice")
@@ -939,6 +943,8 @@ func (d *Display) showPage(page string) bool {
 		return true
 	case "calendar":
 		return d.OpenCalendar()
+	case boardWork, boardSky:
+		return d.openBoard(page)
 	}
 	return false
 }
@@ -1035,7 +1041,10 @@ func (d *Display) gesture(g touch.Gesture) {
 		return
 	}
 	d.mu.Unlock()
-	slog.Info("touch", "gesture", g.String())
+	if g.Kind != touch.Drag {
+		// Not each step of a finger dragging the map or a dashboard: those come many a second.
+		slog.Info("touch", "gesture", g.String())
+	}
 	// A notification that came up at night waits for a touch (releaseNotice), but not for one that
 	// stops a ring: that one is for the alarm. The touch that releases it only releases: whoever
 	// touched the screen has not seen the card yet, so it is not a tap on anything.
@@ -1308,6 +1317,12 @@ func (d *Display) gesture(g touch.Gesture) {
 	}
 
 	// The deck: every finger is its while it is up.
+	// A board, the same way (boards.go).
+	if d.boardShowing() {
+		d.boardGesture(g)
+		d.wake()
+		return
+	}
 	if d.deckShowing() {
 		d.deckGesture(g)
 		d.wake()
@@ -1599,7 +1614,7 @@ func (d *Display) gesture(g touch.Gesture) {
 		// From the bottom edge of the clock it is the deck, once there is one; anywhere else, and on the
 		// pages the clock's swipes also reach (now playing, the weather), it is the volume, while Swipe for
 		// volume is on.
-		if d.fromBottomEdge(g.Y) && d.onClock() && d.openDeck() {
+		if d.fromBottomEdge(g.Y) && d.onClock() && (d.openDeck() || d.openBoard("")) {
 			return
 		}
 		swipeVolume(+1)
@@ -1615,7 +1630,8 @@ func (d *Display) gesture(g touch.Gesture) {
 		swipeVolume(-1)
 	case touch.SwipeRight:
 		// From the left edge it brings the dashboard up, the drawer's gesture mirrored.
-		if d.r != nil && g.X < d.r.drawerEdge() && d.openDashboard() {
+		// With no dashboard set up, the boards (boards.go).
+		if d.r != nil && g.X < d.r.drawerEdge() && (d.openDashboard() || d.openBoard("")) {
 			return
 		}
 		// Across the clock it is the clock style before.
@@ -2342,7 +2358,7 @@ func (d *Display) Start(context.Context) error {
 	d.lookChanged()
 	d.logo = newSplash(w, h)
 	fw, fh := dev.FrameSize()
-	video.Get().UseScreen(video.Screen{W: w, H: h, Rotated: dev.Rotated(), PixFmt: dev.PixFmt()}, fw, fh)
+	video.Get().UseScreen(video.Screen{W: w, H: h, Rotated: dev.Rotated(), PixFmt: dev.PixFmt(), Planes: dev.CanPresentYUV()}, fw, fh)
 	d.mu.Lock()
 	d.booting, d.started = true, time.Now()
 	d.mu.Unlock()
@@ -2478,6 +2494,11 @@ func (d *Display) frame() (next time.Duration) {
 	d.mu.Unlock()
 	busy := updateVisible || view.Phase != "idle" || call.Phase != phone.Idle || ring.any() || reminding || sheetUp || pinIsOpen() ||
 		d.wakeLight(now) > 0 || d.popupUp() != nil || asksAtDevice() || wifiUp || camUp || video.Get().State().Active()
+	if d.lidTick(on) {
+		d.mu.Lock()
+		on = d.on
+		d.mu.Unlock()
+	}
 	if d.awayTick(now, on, busy, night) {
 		d.mu.Lock()
 		on = d.on
@@ -2756,10 +2777,11 @@ func (d *Display) frame() (next time.Duration) {
 	// bigClock/nowPlaying. Background mode rides along with it; Screensaver only takes over once it
 	// has held for the configured wait, tracked by how long it has run continuously.
 	d.deckScene(&s, now)
+	d.boardScene(&s, now)
 	d.dashScene(&s, s.showSheet || s.showDrawer || ring.any() || call.Phase != phone.Idle)
 	boring := s.phase == "idle" && call.Phase == phone.Idle && !ring.any() && !s.bt.Pairing &&
 		!s.showWifi && !s.showSheet && !s.showCamera && !s.showRadar && !s.showWeather && !s.showCalendar && !s.showAlert && !s.nowPlaying &&
-		!s.showDash && !s.showDeck
+		!s.showDash && !s.showDeck && s.board.name == ""
 	// A browser waiting to be let in is a page of its own, over whatever is on the screen: asking for
 	// the setup page is done from the settings screen, so the answer has to reach somebody who is
 	// still standing in it. It was set only on the idle page once, and the press could not be given
@@ -2846,7 +2868,7 @@ func (d *Display) frame() (next time.Duration) {
 
 	// The Call button is on the clock itself and only there: on any other page a tap where it would be
 	// still does what that page does.
-	s.callButton = callButton.Load() && hasMicrophone() && s.phase == "idle" && !s.nowPlaying && !s.strip && !s.showWeather && !s.showCalendar && !s.showDeck &&
+	s.callButton = callButton.Load() && hasMicrophone() && s.phase == "idle" && !s.nowPlaying && !s.strip && !s.showWeather && !s.showCalendar && !s.showDeck && s.board.name == "" &&
 		s.sunrise == 0 && s.slideshowScreensaver == nil && !s.showDrawer && !s.showSheet
 	d.mu.Lock()
 	d.callShown = s.callButton
@@ -2865,6 +2887,9 @@ func (d *Display) frame() (next time.Duration) {
 		d.dropVideoFrame()
 	}
 	key := deckFrameKey(s, ring.any(), call.Phase != phone.Idle)
+	if key == "" {
+		key = boardFrameKey(s, ring.any(), call.Phase != phone.Idle)
+	}
 	if rainbowHere(s) && d.r.rainbow.Busy() {
 		key = "" // the Rainbow light still going out over the deck, or its card going away
 	}
@@ -2914,6 +2939,9 @@ func (d *Display) frame() (next time.Duration) {
 	}
 	if s.bt.Pairing || s.showSheet || s.showWifi || s.showDrawer {
 		return 500 * time.Millisecond
+	}
+	if s.board.name != "" {
+		return boardNext(s)
 	}
 	if s.showRadar && len(s.radar.Frames) > 1 {
 		return radarStep

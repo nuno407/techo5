@@ -30,3 +30,15 @@ func TestShowNotButtons(t *testing.T) {
 		}
 	}
 }
+
+// The Surface RT's power key is KEY_POWER in the same gpio-keys as its volume keys: there it is not the
+// mute, nor is anything but the volume.
+func TestTheSurfaceRTReadsOnlyTheVolume(t *testing.T) {
+	c := showCodes(true)
+	if len(c) != 2 || c[114] != VolumeDown || c[115] != VolumeUp {
+		t.Errorf("Surface RT codes %v, want only the volume keys", c)
+	}
+	if _, ok := c[116]; ok {
+		t.Error("the Surface RT's power key is read as a button")
+	}
+}

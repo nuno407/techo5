@@ -87,10 +87,10 @@ func TestALandscapeControllerIsScaledNotTurned(t *testing.T) {
 // onBoard has to hand back the Show 5's value on a Show 5, which is what a workstation build looks
 // like: no crown panel in the kernel command line, no athena or Skylight device tree.
 func TestOnBoardDefaultsToTheShow5(t *testing.T) {
-	if got := onBoard("goodix-ts", "fts_ts", "Goodix Capacitive TouchScreen"); got != "goodix-ts" {
+	if got := onBoard("goodix-ts", "fts_ts", "Goodix Capacitive TouchScreen", "hid-over-i2c 03EB:8207"); got != "goodix-ts" {
 		t.Errorf("device name %q, want goodix-ts", got)
 	}
-	if got := onBoard(960, 1280, 1920); got != 960 {
+	if got := onBoard(960, 1280, 1920, 1366); got != 960 {
 		t.Errorf("width %d, want 960", got)
 	}
 }
@@ -111,6 +111,30 @@ func TestTheSkylightCornersLandInTheFrameCorners(t *testing.T) {
 		{"top right", 1887, 38, 1887, 34},
 		{"bottom left", 34, 1159, 34, 1043},
 		{"bottom right", 1886, 1179, 1886, 1061},
+	} {
+		if x, y := toFrame(rawW, rawH, c.rx, c.ry); x != c.wantX || y != c.wantY {
+			t.Errorf("%s: raw (%d,%d) became (%d,%d), want (%d,%d)", c.corner, c.rx, c.ry, x, y, c.wantX, c.wantY)
+		}
+	}
+}
+
+// The Surface RT's maXTouch reports 0 to 4095 on both axes over its 1366 by 768 landscape screen. Square
+// ranges would read as a portrait panel and be turned; reportsLandscape keeps them as they are, scaled.
+func TestTheSurfaceRTSquareRangesAreScaledNotTurned(t *testing.T) {
+	defer func(w, h int, l bool) { Width, Height, reportsLandscape = w, h, l }(Width, Height, reportsLandscape)
+	Width, Height, reportsLandscape = 1366, 768, true
+
+	const rawW, rawH = 4096, 4096
+	for _, c := range []struct {
+		corner       string
+		rx, ry       int
+		wantX, wantY int
+	}{
+		{"top left", 0, 0, 0, 0},
+		{"top right", 4095, 0, 1365, 0},
+		{"bottom right", 4095, 4095, 1365, 767},
+		{"bottom left", 0, 4095, 0, 767},
+		{"middle", 2048, 2048, 683, 384},
 	} {
 		if x, y := toFrame(rawW, rawH, c.rx, c.ry); x != c.wantX || y != c.wantY {
 			t.Errorf("%s: raw (%d,%d) became (%d,%d), want (%d,%d)", c.corner, c.rx, c.ry, x, y, c.wantX, c.wantY)

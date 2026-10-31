@@ -40,12 +40,18 @@ func kernelRelease() string {
 // serves it as /proc/idme; mainline has no idme driver, so it is read from here, read only.
 const idmeBootArea = "/dev/mmcblk0boot1"
 
-// idmeFallback reads one idme field from the eMMC where /proc/idme is missing. On the Skylight,
-// which has no idme at all, only the MAC has a stand-in (skylight.go).
+// idmeFallback reads one idme field from the eMMC where /proc/idme is missing. On the Skylight and
+// the Surface RT, which have no idme at all, only the MAC has a stand-in (skylight.go, surfacert.go).
 func idmeFallback(name string) (string, bool) {
 	if Skylight() {
 		if name == "mac_addr" {
 			return skylightMAC()
+		}
+		return "", false
+	}
+	if SurfaceRT() {
+		if name == "mac_addr" {
+			return surfaceRTMAC()
 		}
 		return "", false
 	}

@@ -82,3 +82,26 @@ func TestSkylightTakesOnlyItsOwnRootfs(t *testing.T) {
 		t.Error("a release with only the Skylight's rootfs was offered to a Show on slots")
 	}
 }
+
+// The Surface RT is keyed "arm-surface-rt", which no release carries: neither the Shows' rootfs nor
+// athena's or the Skylight's is ever offered to it.
+func TestTheSurfaceRTTakesNoShowRootfs(t *testing.T) {
+	restoreArch, restoreSurface := arch, onSurfaceRT
+	t.Cleanup(func() { arch, onSurfaceRT = restoreArch, restoreSurface })
+	arch = "arm"
+	onSurfaceRT = func() bool { return true }
+
+	rootfs := func(key string) Binary {
+		return Binary{URL: "https://example/techo5-rootfs-" + key + ".tar.gz", SHA256: strings.Repeat("d", 64), Size: 60 << 20}
+	}
+	bin := map[string]Binary{"arm": {URL: "https://example/echod-arm", SHA256: strings.Repeat("b", 64), Size: 22 << 20}}
+	every := Manifest{Version: "1.3.0", Binaries: bin, Rootfs: map[string]Binary{"arm": rootfs("arm"),
+		"arm-athena": rootfs("athena"), "arm-skylight": rootfs("skylight")}}
+
+	if got := rootfsArch(); got != "arm-surface-rt" {
+		t.Fatalf("the Surface RT's rootfs key is %q, want arm-surface-rt", got)
+	}
+	if every.serves(true) {
+		t.Error("another board's rootfs was offered to a Surface RT")
+	}
+}

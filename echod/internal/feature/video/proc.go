@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/HuskerMinion/techo5/echod/internal/layout"
 )
 
 // ffmpegPath is the decoder, when the tests set one; else TECHO5_FFMPEG names it (a test daemon run
@@ -46,7 +48,13 @@ var imageDecoder = sync.OnceValue(func() string {
 	return pickDecoder(kernelMachine(), fileExists(decoder64))
 })
 
+// systemDecoder is Alpine's own ffmpeg, which the Surface RT's image carries in place of TECHO5's build.
+const systemDecoder = "/usr/bin/ffmpeg"
+
 func pickDecoder(machine string, have64 bool) string {
+	if layout.SurfaceRT() && !fileExists(decoder32) && fileExists(systemDecoder) {
+		return systemDecoder
+	}
 	// A 64-bit ARM kernel says aarch64 to the 32-bit processes on it too; a 32-bit one never does
 	// (armv7l, or armv8l on ARMv8 cores).
 	if have64 && machine == "aarch64" {
@@ -158,7 +166,10 @@ var shellPath = "/bin/sh"
 // rather than being bounded a moment after it has started. The shell's script is fixed; ffmpeg and
 // its arguments, the address among them, reach it as its own arguments ("$0" "$@"), never as text it
 // reads as a command.
-func wrap(path string, args []string) (string, []string) {
+func wrap(path string, args []string) (string, []string) { return wrapWith(path, args, limits) }
+
+// wrapWith is wrap with limits of its own.
+func wrapWith(path string, args []string, limits []string) (string, []string) {
 	// The kernel's choice when memory runs out, before anything of the daemon's.
 	script := "echo 1000 > /proc/self/oom_score_adj && "
 	for _, l := range limits {

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/HuskerMinion/techo5/echod/internal/config"
+	"github.com/HuskerMinion/techo5/echod/internal/hardware/swinput"
 	"github.com/HuskerMinion/techo5/echod/internal/layout"
 	"github.com/HuskerMinion/techo5/echod/internal/lib/asp"
 )
@@ -44,8 +45,8 @@ const (
 //
 // athena on TECHO5's mainline kernels has no such fault, and its pcmC0D1c is the microphones' capture
 // (an older tools/linux/athena kernel) or the echo reference (DL1_AWB_Record), so nothing is held
-// there. Nor on the Skylight, which has no MediaTek AFE.
-var DRAMHold = onSkylight("", onMainline("", "/dev/snd/pcmC0D1c"))
+// there. Nor on the Skylight or the Surface RT, which have no MediaTek AFE.
+var DRAMHold = onSurfaceRT("", onSkylight("", onMainline("", "/dev/snd/pcmC0D1c")))
 
 // startFull starts the stream only once the whole ring is written, at open and after every underrun.
 //
@@ -117,9 +118,16 @@ type kctl struct {
 // only with "Playback Mux" on HP. The amplifier's enable is a GPIO the device tree hands to the
 // kernel (simple-audio-amplifier), powered with the stream. The codec's digital volume is set to its
 // 0 dB top (255) and the volume curve is applied in software, as on every Show.
+//
+// The Surface RT (Tegra 3, mainline kernel) has a WM8962 whose speaker and headphone paths both start
+// unrouted: surfaceRTInit is what its postmarketOS image sets for PipeWire (the UCM profile, and
+// srt-audio-defaults for raw ALSA), the playback half of it.
 var initSequence = boardInit()
 
 func boardInit() []kctl {
+	if layout.SurfaceRT() {
+		return surfaceRTInit
+	}
 	if layout.Skylight() {
 		return skylightInit
 	}
@@ -178,6 +186,23 @@ var skylightInit = []kctl{
 	{name: "Master Playback Volume", level: 255},
 }
 
+// surfaceRTInit routes the WM8962's DAC to the speaker outputs and to the headphone mixers, as the
+// tablet's own mixer defaults do (surface_rt tools/srt-audio-defaults): the speaker driver at its
+// -13 dB there (108 of 127, 1 dB a step from -121 dB) and the DAC's digital volume at 0 dB (96 of
+// 127, 0.75 dB a step). The volume curve is applied in software.
+var surfaceRTInit = []kctl{
+	{name: "SPKOUTL Mixer DACL Switch", level: 1},
+	{name: "SPKOUTR Mixer DACR Switch", level: 1},
+	{name: "HPMIXL DACL Switch", level: 1},
+	{name: "HPMIXR DACR Switch", level: 1},
+	{name: "Int Spk Switch", level: 1},
+	{name: "Speaker Switch", level: 1},
+	{name: "Speaker Volume", level: 108},
+	{name: "Headphone Switch", level: 1},
+	{name: "Headphone Volume", level: 100},
+	{name: "Digital Playback Volume", level: 96},
+}
+
 // athenaMainlineRoutes are the AFE's DL1 into I2S1. Without them the DPCM front end has no back end
 // and the playback device does not open ("no backend DAIs enabled for Playback_1", EINVAL), so they
 // are also the openSequence.
@@ -193,8 +218,8 @@ var openSequence = onMainline(athenaMainlineRoutes, nil)
 // PlaybackDevice is the playback PCM: the AFE's DL1 into the codec on the Show 5s and crown, and on
 // athena "I2S0DL1_PLayback", the AFE's DL1 into the TAS5805M (hw:0,7). On athena's mainline kernel
 // DL1 is the card's first front end, Playback_1 (hw:0,0). The Skylight's simple-audio-card has one
-// playback device, hw:0,0.
-var PlaybackDevice = onSkylight(0, onMainline(0, onAthena(7, 23)))
+// playback device, hw:0,0, and the Surface RT's WM8962 card one too, device 0 on its own card (Card).
+var PlaybackDevice = onSurfaceRT(0, onSkylight(0, onMainline(0, onAthena(7, 23))))
 
 // hwRate is the rate the card runs at. Everything up to the card works at Rate; athena's amplifier
 // runs at 96 kHz, as Fire OS runs it (AFE.cfg: "Speakers SamplingRate" 48000, "SpeakerHw
@@ -223,10 +248,11 @@ const athenaTrimDB = 0.0
 // hwBits is the sample width the card is sent: Bits, as everything up to it works.
 const hwBits = Bits
 
-// softRef is whether the speaker may feed the software echo reference (lib/echoref): only athena on
-// the mainline kernel, and there only while the microphones use it (echoref.InUse), which is when the
-// card's own DL1_AWB_Record did not open (mic/athena.go).
-var softRef = layout.AthenaMainline()
+// softRef is whether the speaker may feed the software echo reference (lib/echoref): athena on the
+// mainline kernel, and there only while the microphones use it (echoref.InUse), which is when the
+// card's own DL1_AWB_Record did not open (mic/athena.go); and the Surface RT, whose WM8962 has no
+// loopback at all.
+var softRef = layout.AthenaMainline() || layout.SurfaceRT()
 
 // onMainline picks the value for athena on TECHO5's mainline kernel over any other.
 func onMainline[T any](mainline, other T) T {
@@ -240,6 +266,14 @@ func onMainline[T any](mainline, other T) T {
 func onSkylight[T any](skylight, other T) T {
 	if layout.Skylight() {
 		return skylight
+	}
+	return other
+}
+
+// onSurfaceRT picks the Surface RT's value over any other.
+func onSurfaceRT[T any](surfaceRT, other T) T {
+	if layout.SurfaceRT() {
+		return surfaceRT
 	}
 	return other
 }
@@ -281,7 +315,27 @@ func showInit(rt5616 bool) []kctl {
 
 // pathSequence and headphoneOff move the 1st gen Show 5 and the Show 8 between their speaker and
 // their jack; the 2nd gen Show 5 has no jack and nothing to move.
-var pathSequence, headphoneOff = showPaths(HasJack)
+var pathSequence, headphoneOff = boardPathSequence()
+
+func boardPathSequence() (map[Output][]kctl, []kctl) {
+	if layout.SurfaceRT() {
+		return surfaceRTPaths()
+	}
+	return showPaths(HasJack)
+}
+
+// surfaceRTPaths are the WM8962's two outputs, both fed from the DAC by surfaceRTInit: each is muted at
+// its own driver switch while the other plays alone. With raw ALSA nothing else does it: the
+// tablet's UCM profile is PipeWire's.
+func surfaceRTPaths() (map[Output][]kctl, []kctl) {
+	return map[Output][]kctl{
+		OutputSpeaker:   {{name: "Speaker Switch", level: 1}, {name: "Headphone Switch", level: 0}},
+		OutputHeadphone: {{name: "Speaker Switch", level: 0}, {name: "Headphone Switch", level: 1}},
+		OutputBoth:      {{name: "Speaker Switch", level: 1}, {name: "Headphone Switch", level: 1}},
+	}, []kctl{
+		{name: "Headphone Switch", level: 0},
+	}
+}
 
 // showPaths is the RT5616's two outputs on the 1st gen Show 5, found on a unit 2026-10-03 with
 // headphones in. The Show 8 has the same codec and jack, and the same paths moved its sound to
@@ -329,6 +383,12 @@ const jackPoll = 500 * time.Millisecond
 // DetectOutput picks the output to use. A board with no jack, or a missing switch, is the speaker.
 func DetectOutput() Output {
 	if !HasJack {
+		return OutputSpeaker
+	}
+	if layout.SurfaceRT() {
+		if swinput.Headphones.On() {
+			return OutputHeadphone
+		}
 		return OutputSpeaker
 	}
 	b, err := os.ReadFile(jackState)
@@ -448,8 +508,9 @@ const OutputBoost = 1.0
 // DriverTuning applies the vendor driver's volume-dependent EQ and limiter (lib/asp), read from the
 // unit's own vendor partition. Both generations of Show 5 declare the same four filters and the same
 // compressor in their AFE.cfg ("Cronos" and "Checkers"), which lib/asp knows as asp.Show; a unit
-// whose files are missing or are a set we do not know says so and plays untuned.
-const DriverTuning = true
+// whose files are missing or are a set we do not know says so and plays untuned. The Surface RT
+// has no vendor partition and no tuning to read: it plays untuned by design.
+var DriverTuning = !layout.SurfaceRT()
 
 // tuningSet is the tuning to load by name, where the files cannot tell it: nil, the Shows' can.
 var tuningSet *asp.Set
@@ -457,7 +518,9 @@ var tuningSet *asp.Set
 // HasJack is whether the device has a headphone jack, and so the Audio output choice: the 1st gen
 // Show 5 and the Show 8 do; the 2nd gen Show 5 has none. The kernel's jack switch has to be there as
 // well, so a board whose device tree leaves the jack off is the speaker only.
-var HasJack = (layout.Checkers() || layout.Crown()) && exists(jackState)
+//
+// The Surface RT's jack is the WM8962 card's "Headphones Jack" input switch (hardware/swinput).
+var HasJack = ((layout.Checkers() || layout.Crown()) && exists(jackState)) || (layout.SurfaceRT() && swinput.Headphones.Here())
 
 func exists(path string) bool {
 	_, err := os.Stat(path)

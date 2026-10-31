@@ -157,6 +157,7 @@ type scene struct {
 
 	// showDeck is the deck page, deck what it shows (render_deck.go).
 	showDeck bool
+	board    boardView // a board, when board.name is set (boards.go)
 	deck     deckView
 
 	// alerts are the weather alerts at home and nearby (the clock's badge, the rain map's pills and
@@ -661,6 +662,13 @@ func (r *renderer) draw(s scene) {
 	}
 	if s.showCalendar {
 		r.calendarPage(s)
+		if s.showVolume {
+			r.volumeBar(s)
+		}
+		return
+	}
+	if s.board.name != "" {
+		r.boardPage(s)
 		if s.showVolume {
 			r.volumeBar(s)
 		}

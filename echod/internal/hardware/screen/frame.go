@@ -44,11 +44,16 @@ func (d *Device) PresentFrame(frame []byte, over image.Rectangle) error {
 	if d.presentFrameGPU(frame, over) {
 		return nil
 	}
+	d.leaveVideoFor()
 	next := d.page
 	if d.pages > 1 {
 		next = (d.page + 1) % d.pages
 	}
-	if err := d.paintFrame(d.mem[next*d.pageBytes:(next+1)*d.pageBytes], next, frame, over); err != nil {
+	dst, err := d.pageFor(next)
+	if err != nil {
+		return err
+	}
+	if err := d.paintFrame(dst, next, frame, over); err != nil {
 		return err
 	}
 	return d.pan(next)

@@ -8,6 +8,7 @@ package screen
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"image"
 	"sync"
@@ -178,4 +179,12 @@ func Backlight() (int, error) {
 	lightMu.Lock()
 	defer lightMu.Unlock()
 	return light, nil
+}
+
+// CanPresentYUV: a panel has no video plane.
+func (d *Device) CanPresentYUV() bool { return false }
+
+// PresentYUV is not offered on a panel (CanPresentYUV).
+func (d *Device) PresentYUV([]byte, int, int, image.Rectangle, image.Rectangle) error {
+	return errors.New("screen: no video plane")
 }

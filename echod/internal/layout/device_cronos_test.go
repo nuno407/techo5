@@ -54,6 +54,8 @@ func TestAthenaIsReadFromTheDeviceTree(t *testing.T) {
 		{"the Skylight's own tree", []string{"skylight,cal150", "rockchip,rk3566"}, boardSkylight},
 		{"another RK3566 board", []string{"pine64,quartz64-a", "rockchip,rk3566"}, boardCronos},
 		{"a Skylight name that only starts the same", []string{"skylight,cal150x"}, boardCronos},
+		{"the Surface RT's tree", []string{"microsoft,surface-rt-efi", "microsoft,surface-rt", "nvidia,tegra30"}, boardSurfaceRT},
+		{"another Tegra 3 board", []string{"asus,tf300t", "nvidia,tegra30"}, boardCronos},
 	} {
 		if got := showBoard("console=tty0 bootopt=64S3,32S1,32S1", gone, c.compatible); got != c.want {
 			t.Errorf("%s: %q, want %q", c.name, got, c.want)
