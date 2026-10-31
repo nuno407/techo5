@@ -58,6 +58,11 @@ if ! mountpoint -q /data; then
 fi
 if ! mountpoint -q /boot; then
 	d=$(dev_of SRT_ESP "${ESP_DEV:-/dev/mmcblk0p1}")
+	# systemd-boot renames a trial's entry and rewrites its random seed through the firmware's FAT
+	# driver, which leaves the volume's dirty bit set: check it (and clear the bit) before mounting.
+	timeout 60 fsck.vfat -a -w "$d" >> $LOG 2>&1
+	r=$?
+	[ $r -le 1 ] || log "esp: fsck.vfat -a $d returned $r"
 	mount -t vfat -o nodev,nosuid,noexec,umask=0077,codepage=437,iocharset=ascii "$d" /boot && log "esp: $d on /boot" ||
 		log "esp: mounting $d failed; this slot cannot commit"
 fi

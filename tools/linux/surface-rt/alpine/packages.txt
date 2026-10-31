@@ -23,3 +23,6 @@ openssh-sftp-server
 ffmpeg
 gstreamer-tools
 gst-plugins-bad
+
+# fsck.vfat for the ESP before it is mounted (srt-early.sh): the firmware leaves its dirty bit set.
+dosfstools
