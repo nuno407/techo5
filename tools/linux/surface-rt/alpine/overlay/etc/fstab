@@ -1,0 +1,3 @@
+# The root is mounted by the kernel (root=PARTUUID=..., slotctl), /data (SRT_DATA) and /boot (SRT_ESP)
+# by etc/techo5/srt-early.sh.
+proc	/proc	proc	defaults	0 0

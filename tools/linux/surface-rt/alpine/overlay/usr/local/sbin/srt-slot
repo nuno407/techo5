@@ -1,0 +1,8 @@
+#!/bin/sh
+# srt-slot: the slot this system booted from (a or b), or nothing and exit 1. The kernel mounted the
+# root itself, so /proc/mounts names it /dev/root: compare device numbers instead.
+d=$(mountpoint -d / 2>/dev/null)
+for s in a:mmcblk0p2 b:mmcblk0p3; do
+	[ -n "$d" ] && [ "$d" = "$(cat /sys/class/block/${s#*:}/dev 2>/dev/null)" ] && { echo "${s%%:*}"; exit 0; }
+done
+exit 1

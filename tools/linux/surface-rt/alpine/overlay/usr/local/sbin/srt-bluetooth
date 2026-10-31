@@ -1,0 +1,20 @@
+#!/bin/sh
+# srt-bluetooth: attach the Marvell 88W8797's Bluetooth on UARTC (H4, 3 Mbaud, RTS/CTS), kept
+# running (postmarketOS's srt-bluetooth.service). Needs the BT_UART combo firmware, which mwifiex
+# loads over SDIO (/lib/firmware/updates/mrvl/sd8797_uapsta.bin, the unit's own: install-slot.sh
+# copies it, no image carries it), so it waits for the Wi-Fi interface first. boot.sh's t5_bt_up
+# then starts bluetoothd and bluez-alsa on the hci0 this makes.
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+[ -r /etc/techo5/device.conf ] && . /etc/techo5/device.conf
+tty=${SRT_BT_TTY:-/dev/ttyTHS1}
+n=0
+while [ ! -e /sys/class/net/wlan0 ] && [ ! -e /sys/class/net/mlan0 ]; do
+	n=$((n+1)); [ $n -ge 600 ] && { echo "srt-bluetooth: no Wi-Fi interface, so no BT firmware; giving up"; exit 1; }
+	sleep 1
+done
+[ -e "$tty" ] || { echo "srt-bluetooth: no $tty"; exit 1; }
+while true; do
+	btattach -B "$tty" -P h4 -S 3000000
+	echo "srt-bluetooth: btattach exited ($?); again in 5 s"
+	sleep 5
+done

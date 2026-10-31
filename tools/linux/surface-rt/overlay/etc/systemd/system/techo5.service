@@ -1,0 +1,24 @@
+# TECHO5 on the Microsoft Surface RT (postmarketOS, systemd): the daemon owns the panel, the
+# touchscreen, the buttons and the WM8962, so nothing else may hold them (tools/linux/surface-rt).
+[Unit]
+Description=TECHO5 daemon
+Wants=network-online.target
+After=network-online.target sound.target systemd-udev-settle.service
+Conflicts=getty@tty1.service
+
+[Service]
+Type=simple
+ExecStartPre=/bin/mkdir -p /data/misc/techo5/models /data/techo5-linux /run/techo5
+# The kernel's console (fbcon) shares the panel: its cursor blinks in a corner of every frame and
+# kernel messages would print over it. Let it go; `echo 1 > /sys/class/vtconsole/vtcon1/bind` brings
+# it back.
+ExecStartPre=-/bin/sh -c 'for v in /sys/class/vtconsole/vtcon*; do grep -q "frame buffer" $v/name && echo 0 > $v/bind; done; true'
+ExecStart=/usr/local/bin/techo5 run
+Restart=always
+RestartSec=2
+# The daemon logs to stderr; journald keeps it (journalctl -u techo5).
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

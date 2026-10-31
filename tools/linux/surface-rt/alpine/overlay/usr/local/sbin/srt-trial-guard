@@ -1,0 +1,42 @@
+#!/bin/sh
+# srt-trial-guard: a slot on trial that cannot reach its gateway reboots into the good slot (started
+# by etc/techo5/srt-early.sh; postmarketOS's srt-wdt-disarm without the systemd unit).
+#
+# On trial is what boot.sh's on_trial says: the boot layer's record (bootctl, systemd-boot's entries)
+# has the booted slot not successful yet. boot.sh's own trial commits it (daemon up 5 minutes, a
+# default route: etc/techo5/trial.conf); this only adds the early way out: no gateway within
+# SRT_TRIAL_NET_WAIT seconds marks the slot bad (slotctl rollback) and reboots, so the good slot
+# boots next rather than the trial using up its tries. The PMIC watchdog is fed by
+# busybox's watchdog (srt-early.sh), which catches a trial that hangs; on a kernel without
+# tps65911_wdt the PMIC register is cleared here, since its setting survives the power cycle it causes.
+# The Tegra watchdog is disabled in the kernel: its reset leaves the board dead.
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+[ -r /etc/techo5/device.conf ] && . /etc/techo5/device.conf
+log() { echo "<14>srt-trial-guard: $*" > /dev/kmsg 2>/dev/null; echo "srt-trial-guard: $*"; }
+s=$(srt-slot)
+if [ -n "$s" ] && [ "$(bootctl current 2>/dev/null)" = "$s" ] &&
+	bootctl -q status 2>/dev/null | grep -q "^slot $s: .*successful 0"; then
+	log "slot $s on trial ($(bootctl -q status | grep "^slot $s: ")): waiting ${SRT_TRIAL_NET_WAIT:-80} s for the network"
+	if ! srt-healthy "${SRT_TRIAL_NET_WAIT:-80}"; then
+		{ cat /run/srt-boot.log /run/boot.log; ip addr; ip route; wpa_cli -p /run/wpa -i wlan0 status; dmesg | tail -n 200; } \
+			> /data/techo5-linux/srt-trial-failed.log 2>&1
+		if slotctl rollback; then
+			log "slot $s has no network; marked bad, rebooting into the good slot"
+			sync
+			reboot
+			exit 1
+		fi
+		log "slot $s has no network and no good slot to fall back to; boot.sh's trial decides"
+	else
+		log "slot $s reaches its gateway"
+	fi
+fi
+if ! grep -qs TPS65911 /sys/class/watchdog/*/identity; then
+	pmic=$(ls -d /sys/bus/i2c/devices/*-002d 2>/dev/null | head -1)
+	if [ -n "$pmic" ]; then
+		bus=$(basename "$pmic"); bus=${bus%%-*}
+		i2cset -f -y "$bus" 0x2d 0x69 0x00 && log "PMIC watchdog register cleared (no tps65911_wdt)" ||
+			log "PMIC watchdog not cleared"
+	fi
+fi
+exit 0

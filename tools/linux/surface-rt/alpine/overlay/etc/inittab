@@ -1,0 +1,15 @@
+# TECHO5 on the Surface RT: busybox init (tools/linux/surface-rt/alpine).
+#
+# srt-early.sh brings up what the Echos' initramfs and kernel give boot.sh for free (mounts, the
+# PMIC watchdog, modules, wlan0, SSH, the A/B slot trial), boot.sh is TECHO5's own (network, clock,
+# Bluetooth stack, the network keeper), srt-late.sh hands the panel to the daemon. Every sysinit line
+# runs to its end before the next; what has to keep running is started from them in the background.
+::sysinit:/etc/techo5/srt-early.sh
+::sysinit:/etc/techo5/boot.sh
+::sysinit:/etc/techo5/srt-late.sh
+::respawn:/usr/local/sbin/techo5-run
+# Serial console (UART A, console=ttyS0 on the kernel command line): root login with a password,
+# and root has none, so in practice only `admin` (sudo).
+ttyS0::respawn:/sbin/getty -L 115200 ttyS0 vt100
+::ctrlaltdel:/sbin/reboot
+::shutdown:/etc/techo5/shutdown.sh

@@ -1,0 +1,14 @@
+# TECHO5 on the Surface RT: what the daemon serves on Wi-Fi, as tools/linux/rootfs's techo5-firewall
+# opens it on the Echo image. postmarketOS's own rules drop everything else inbound.
+table inet filter {
+	chain input {
+		tcp dport 6053 accept comment "TECHO5: Home Assistant's ESPHome API"
+		udp dport 5353 accept comment "TECHO5: mDNS"
+		tcp dport 8928 accept comment "TECHO5: Sendspin"
+		tcp dport 8181 accept comment "TECHO5: setup page, camera and screen views, DLNA"
+		udp dport 3702 accept comment "TECHO5: WS-Discovery"
+		tcp dport { 5000, 4070, 8554 } accept comment "TECHO5: AirPlay, Spotify Connect, RTSP"
+		udp dport 6001-6010 accept comment "TECHO5: AirPlay"
+		meta nfproto ipv4 udp dport 1900 accept comment "TECHO5: DLNA's SSDP"
+	}
+}

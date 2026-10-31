@@ -1,0 +1,25 @@
+# The Surface RT's packages on top of tools/linux/packages-rootfs.txt (build-rootfs.sh joins them).
+# Alpine's own wpa_supplicant (2.11): mwifiex has none of the mt76x8 trouble that keeps the Echos on 2.9.
+wpa_supplicant
+# modprobe that reads the kernel's zstd-compressed modules (busybox's cannot).
+kmod
+# slotctl (the surface_rt project's A/B slots): lsblk for the partition UUIDs, findmnt.
+lsblk
+findmnt
+blkid
+# admin's sudo, as on postmarketOS.
+sudo
+# srt-lid-blank reads the cover's switch.
+evtest
+# srt-trial-guard on a kernel without tps65911_wdt.
+i2c-tools
+# install-slot.sh turns postmarketOS's OpenSSH host keys into dropbear's, so the host key stays.
+dropbear-convert
+# scp and sftp: dropbear runs /usr/lib/ssh/sftp-server for the sftp subsystem (OpenSSH scp uses it).
+openssh-sftp-server
+# Video (echod feature/video on surface-rt): Alpine's ffmpeg fetches, demuxes and makes the sound (and
+# decodes on the cores what the VDE cannot); GStreamer's v4l2slh264dec (gst-plugins-bad, v4l2codecs)
+# decodes H.264 on the Tegra 3's VDE, run as gst-launch-1.0 (gstreamer-tools).
+ffmpeg
+gstreamer-tools
+gst-plugins-bad

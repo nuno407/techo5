@@ -1,0 +1,35 @@
+#!/bin/sh
+# srt-lid-blank: blank the panel while the Type/Touch Cover is closed over the screen (the surface_rt
+# project's Python one, in shell). Reads SW_LID from the "GPIO Hall Effect Sensor" input device with
+# evtest and turns the backlight off and on (bl_power 4 = off, 0 = on), which the daemon does not
+# touch. Started by etc/techo5/srt-late.sh; restarts itself if evtest ends.
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+BL=/sys/class/backlight/backlight/bl_power
+find_dev() {
+	for d in /sys/class/input/event*; do
+		[ "$(cat "$d/device/name" 2>/dev/null)" = "GPIO Hall Effect Sensor" ] && { echo "/dev/input/${d##*/}"; return 0; }
+	done
+	return 1
+}
+blank() { echo "$1" > $BL 2>/dev/null || echo "srt-lid-blank: backlight: cannot write $BL"; }
+n=0
+until dev=$(find_dev); do
+	n=$((n+1)); [ $n -ge 60 ] && { echo "srt-lid-blank: hall sensor input not found"; exit 1; }
+	sleep 1
+done
+command -v evtest >/dev/null || { echo "srt-lid-blank: no evtest"; exit 1; }
+while true; do
+	# --query: exit status 10 while the switch is on (cover closed)
+	evtest --query "$dev" EV_SW SW_LID; [ $? -eq 10 ] && blank 4 || blank 0
+	# Then each event as it comes, raw: the kernel's 32-bit struct input_event is 16 bytes, read as
+	# eight little-endian u16s: sec, usec (two each), type, code, value (two). EV_SW = 5, SW_LID = 0.
+	# (evtest's own output is block-buffered into a pipe, which would hold the events back.)
+	exec 3< "$dev" || { sleep 5; continue; }
+	while ev=$(dd bs=16 count=1 <&3 2>/dev/null | od -An -tu2 -v) && [ -n "$ev" ]; do
+		set -- $ev
+		[ $# -eq 8 ] && [ "$5" = 5 ] && [ "$6" = 0 ] || continue
+		if [ "$7" = 1 ]; then blank 4; else blank 0; fi
+	done
+	exec 3<&-
+	sleep 5
+done
