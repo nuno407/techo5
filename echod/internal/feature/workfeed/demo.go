@@ -68,5 +68,24 @@ func DemoView(now time.Time) View {
 		}
 		v.Feeds = append(v.Feeds, fd)
 	}
+	v.Calendar = demoCalendar(now)
 	return v
+}
+
+// demoCalendar is a made-up day of meetings around now: one under way, the next soon, more later and
+// tomorrow, an all-day one.
+func demoCalendar(now time.Time) Feed {
+	at := func(min int) time.Time { return now.Truncate(15 * time.Minute).Add(time.Duration(min) * time.Minute) }
+	day := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	events := []Event{
+		{ID: "d-o-0", Title: "Release week", Start: day, End: day.AddDate(0, 0, 1), AllDay: true},
+		{ID: "d-o-1", Title: "Panel stand-up", Start: at(-15), End: at(15), Online: true, Organizer: "Marta",
+			JoinURL: "https://teams.microsoft.com/l/meetup-join/demo"},
+		{ID: "d-o-2", Title: "Kernel 20 review", Start: at(45), End: at(90), Location: "Room 2.14", Organizer: "Pedro"},
+		{ID: "d-o-3", Title: "1:1 with Carla", Start: at(150), End: at(180), Online: true, Organizer: "Carla", Tentative: true},
+		{ID: "d-o-4", Title: "Focus time", Start: at(195), End: at(285), Free: true},
+		{ID: "d-o-5", Title: "Sky board demo", Start: at(300), End: at(330), Online: true, Organizer: "Nuno"},
+		{ID: "d-o-6", Title: "Planning", Start: day.AddDate(0, 0, 1).Add(10 * time.Hour), End: day.AddDate(0, 0, 1).Add(11 * time.Hour), Location: "Lisbon office"},
+	}
+	return Feed{Source: Outlook, Name: nameOf(Outlook), State: Ready, Demo: true, Fetched: now, Events: events}
 }

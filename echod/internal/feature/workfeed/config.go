@@ -18,6 +18,8 @@ type Settings struct {
 	GitHub GitHubSettings `json:"github"`
 	Slack  SlackSettings  `json:"slack"`
 	Jira   JiraSettings   `json:"jira"`
+	// Outlook is the calendar (outlook.go).
+	Outlook OutlookSettings `json:"outlook"`
 }
 
 type GitHubSettings struct {

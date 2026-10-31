@@ -44,10 +44,9 @@ func workScrollMax(col int) int {
 	return workRows.max[col]
 }
 
-// workColumns are the three columns' boxes on a screen w wide, under the bar.
-func (p *paint) workColumns(h int) [3]image.Rectangle {
+// workColumns are the three columns' boxes on a screen w wide, from top down.
+func (p *paint) workColumns(top, h int) [3]image.Rectangle {
 	m, gap := p.s(boardIn), p.s(boardGap)
-	top := p.s(boardBarH) + p.s(4)
 	cw := (p.w - 2*m - 2*gap) / 3
 	var out [3]image.Rectangle
 	for i := range out {
@@ -140,7 +139,9 @@ func (r *renderer) workPage(s scene) []boardZone {
 	}
 	zones := r.boardBar(s, summary, v.Hot > 0 || v.Problem != "", false)
 
-	cols := r.workColumns(r.h)
+	// The calendar's strip across the top, the columns under it.
+	top, zones := r.agendaStrip(s, v.Calendar, r.s(boardBarH)+r.s(4), zones)
+	cols := r.workColumns(top, r.h)
 	var most [3]int
 	for i, fd := range v.Feeds {
 		if i >= len(cols) {
@@ -162,6 +163,11 @@ func (r *renderer) workPage(s scene) []boardZone {
 
 // findItem is the item with the id, and its source.
 func findItem(v workfeed.View, id string) (workfeed.Feed, workfeed.Item, bool) {
+	for _, e := range v.Calendar.Events {
+		if e.ID == id {
+			return v.Calendar, eventItem(e), true
+		}
+	}
 	for _, fd := range v.Feeds {
 		for _, it := range fd.Items {
 			if it.ID == id {
@@ -211,9 +217,17 @@ func (r *renderer) workColumn(s scene, fd workfeed.Feed, box image.Rectangle, sc
 	case fd.State == workfeed.Ready && fd.Problem != "":
 		note, noteCol = fd.Problem, amber
 	}
-	if note != "" {
-		r.text(metaF, r.fit(metaF, note, x1-x0), x0, foot, noteCol)
-		listBottom = foot - r.s(20)
+	// The foot is kept for the note and for how many items are below it.
+	listBottom = foot - r.s(20)
+	footLine := func(more string) {
+		room := x1 - x0
+		if more != "" {
+			r.rightText(metaF, more, x1, foot, dim)
+			room -= r.width(metaF, more) + r.s(12)
+		}
+		if note != "" {
+			r.text(metaF, r.fit(metaF, note, room), x0, foot, noteCol)
+		}
 	}
 
 	switch fd.State {
@@ -261,6 +275,7 @@ func (r *renderer) workColumn(s scene, fd workfeed.Feed, box image.Rectangle, sc
 
 	if len(fd.Items) == 0 {
 		r.text(fc.sub, "Nothing here right now", x0, top+r.s(34), dim)
+		footLine("")
 		return zones, 0
 	}
 	rowH := r.s(workRowH)
@@ -292,8 +307,9 @@ func (r *renderer) workColumn(s scene, fd workfeed.Feed, box image.Rectangle, sc
 		zones = append(zones, boardZone{r: row, kind: "item", id: it.ID, col: col})
 	}
 	if hidden := len(fd.Items) - scroll - fits; hidden > 0 {
-		more := fmt.Sprintf("%d more ↓", hidden)
-		r.rightText(metaF, more, x1, head+r.s(22), dim)
+		footLine(fmt.Sprintf("%d more ↓", hidden))
+	} else {
+		footLine("")
 	}
 	return zones, max(len(fd.Items)-fits, 0)
 }

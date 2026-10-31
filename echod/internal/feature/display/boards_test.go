@@ -31,11 +31,17 @@ func TestBoardsDraw(t *testing.T) {
 			Trail: [][2]float64{{38.7, -9.3}, {38.65, -9.35}}},
 		{ID: "c", Callsign: "N712PH", Ground: true, Lat: 38.77, Lon: -9.13, At: at},
 	}
+	signIn := workfeed.DemoView(at)
+	signIn.Calendar = workfeed.Feed{Source: workfeed.Outlook, Name: "Outlook", State: workfeed.SigningIn,
+		SignIn: &workfeed.SignIn{Code: "F7KQ2PLMX", URL: "https://microsoft.com/devicelogin", Expires: at.Add(14 * time.Minute)}}
+	off.Calendar = workfeed.Feed{Source: workfeed.Outlook, Name: "Outlook", State: workfeed.Off, Setup: `Add "outlook": {"client_id": "…"} to /data/misc/techo5/work.json`}
 	scenes := map[string]scene{
-		"work":      {now: at, phase: "idle", board: boardView{name: boardWork, work: work}},
-		"work-card": {now: at, phase: "idle", board: boardView{name: boardWork, work: work, detail: work.Feeds[1].Items[0].ID}},
-		"work-off":  {now: at, phase: "idle", board: boardView{name: boardWork, work: off}},
-		"sky":       {now: at, phase: "idle", board: boardView{name: boardSky, selected: "a"}},
+		"work-signin":  {now: at, phase: "idle", board: boardView{name: boardWork, work: signIn}},
+		"work-meeting": {now: at, phase: "idle", board: boardView{name: boardWork, work: work, detail: work.Calendar.Events[1].ID}},
+		"work":         {now: at, phase: "idle", board: boardView{name: boardWork, work: work}},
+		"work-card":    {now: at, phase: "idle", board: boardView{name: boardWork, work: work, detail: work.Feeds[1].Items[0].ID}},
+		"work-off":     {now: at, phase: "idle", board: boardView{name: boardWork, work: off}},
+		"sky":          {now: at, phase: "idle", board: boardView{name: boardSky, selected: "a"}},
 	}
 	dir := os.Getenv("SHOW_PREVIEW")
 	for name, s := range scenes {
@@ -62,7 +68,7 @@ func TestBoardsDraw(t *testing.T) {
 			if kinds["tab"] != 2 || kinds["close"] != 1 {
 				t.Errorf("%s%s: zones %v", name, panel.name, kinds)
 			}
-			if name == "work" && kinds["item"] < 9 {
+			if name == "work" && kinds["item"] < 12 {
 				t.Errorf("%s%s: %d items drawn", name, panel.name, kinds["item"])
 			}
 			if name == "sky" && (kinds["plane"] != 3 || kinds["zoomin"] != 1 || kinds["card"] != 1) {

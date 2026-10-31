@@ -23,19 +23,25 @@ const (
 	GitHub Source = "github"
 	Slack  Source = "slack"
 	Jira   Source = "jira"
+	// Outlook is the calendar: not a column but the agenda strip over them (View.Calendar).
+	Outlook Source = "outlook"
 )
 
 // Sources are the board's columns, in order.
 var Sources = []Source{GitHub, Slack, Jira}
 
+// polled are the sources polled: the columns and the calendar.
+var polled = []Source{GitHub, Slack, Jira, Outlook}
+
 // State is how a source is.
 type State int
 
 const (
-	Off     State = iota // no token: the board says what to add
-	Loading              // set, never fetched yet
-	Ready                // fetched; Problem may say the last poll failed, the items being the ones before
-	Failed               // set, and every poll so far has failed
+	Off       State = iota // no token: the board says what to add
+	Loading                // set, never fetched yet
+	Ready                  // fetched; Problem may say the last poll failed, the items being the ones before
+	Failed                 // set, and every poll so far has failed
+	SigningIn              // the calendar waiting for the owner to sign in (Feed.SignIn)
 )
 
 // Feed is one source as the board shows it.
@@ -49,6 +55,10 @@ type Feed struct {
 	Counts  []Count
 	Items   []Item // newest first, those needing attention ahead of the rest
 	Fetched time.Time
+
+	// The calendar's: its meetings in order, and while it waits for a sign-in, what to enter where.
+	Events []Event
+	SignIn *SignIn
 }
 
 // Count is one number at the head of a column: Reviews 2, Mentions 1.
@@ -74,6 +84,7 @@ type Item struct {
 // View is the whole board.
 type View struct {
 	Feeds    []Feed
+	Calendar Feed   // Outlook's meetings, over the columns
 	Hot      int    // items needing attention, across sources
 	Problem  string // work.json could not be read
 	Settings string // where the tokens go
@@ -105,6 +116,7 @@ type Feature struct {
 
 	gh githubState
 	sl slackState
+	ol outlookState
 }
 
 var (
@@ -160,7 +172,7 @@ func (f *Feature) round(ctx context.Context) {
 	idle := now.Sub(f.looked) > lookedFor
 	f.mu.Unlock()
 	var wg sync.WaitGroup
-	for _, src := range Sources {
+	for _, src := range polled {
 		if !configured(s, src) {
 			f.forget(src)
 			continue
@@ -179,7 +191,7 @@ func (f *Feature) round(ctx context.Context) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			f.poll(ctx, s, src, idle)
+			f.poll(ctx, s, src, idle, !idle)
 		}()
 	}
 	wg.Wait()
@@ -193,6 +205,8 @@ func configured(s Settings, src Source) bool {
 		return s.Slack.set()
 	case Jira:
 		return s.Jira.set()
+	case Outlook:
+		return s.Outlook.set()
 	}
 	return false
 }
@@ -218,10 +232,10 @@ func (e errLater) Error() string {
 }
 
 // poll fetches one source and keeps what came.
-func (f *Feature) poll(ctx context.Context, s Settings, src Source, idle bool) {
+func (f *Feature) poll(ctx context.Context, s Settings, src Source, idle, looked bool) {
 	ctx, cancel := context.WithTimeout(ctx, pollTimeout)
 	defer cancel()
-	every := map[Source]time.Duration{GitHub: githubEvery, Slack: slackEvery, Jira: jiraEvery}[src]
+	every := map[Source]time.Duration{GitHub: githubEvery, Slack: slackEvery, Jira: jiraEvery, Outlook: outlookEvery}[src]
 	var got Feed
 	var err error
 	switch src {
@@ -231,8 +245,10 @@ func (f *Feature) poll(ctx context.Context, s Settings, src Source, idle bool) {
 		got, err = f.sl.fetch(ctx, s.Slack)
 	case Jira:
 		got, err = fetchJira(ctx, s.Jira)
+	case Outlook:
+		got, every, err = f.ol.fetch(ctx, s.Outlook, looked)
 	}
-	if idle {
+	if idle && got.State != SigningIn {
 		every *= idleFactor
 	}
 	var later errLater
@@ -244,7 +260,10 @@ func (f *Feature) poll(ctx context.Context, s Settings, src Source, idle bool) {
 	old := f.feeds[src]
 	switch {
 	case err == nil:
-		got.Source, got.Name, got.State, got.Fetched = src, nameOf(src), Ready, time.Now()
+		got.Source, got.Name, got.Fetched = src, nameOf(src), time.Now()
+		if got.State != SigningIn {
+			got.State = Ready
+		}
 		sortItems(got.Items)
 		if len(got.Items) > maxItems {
 			got.Items = got.Items[:maxItems]
@@ -287,6 +306,8 @@ func nameOf(src Source) string {
 		return "Slack"
 	case Jira:
 		return "Jira"
+	case Outlook:
+		return "Outlook"
 	}
 	return string(src)
 }
@@ -300,6 +321,8 @@ func setupLine(src Source) string {
 		return `Add "slack": {"token": "xoxp-…"} to ` + SettingsPath()
 	case Jira:
 		return `Add "jira": {"site", "email", "token"} to ` + SettingsPath()
+	case Outlook:
+		return `Add "outlook": {"client_id": "…"} to ` + SettingsPath()
 	}
 	return ""
 }
@@ -329,6 +352,16 @@ func (f *Feature) View() View {
 			}
 		}
 		v.Feeds = append(v.Feeds, fd)
+	}
+	switch {
+	case !configured(s, Outlook) && s.Demo:
+		v.Calendar = demoCalendar(now)
+	case !configured(s, Outlook):
+		v.Calendar = Feed{Source: Outlook, Name: nameOf(Outlook), State: Off, Setup: setupLine(Outlook)}
+	case f.feeds[Outlook] != nil:
+		v.Calendar = *f.feeds[Outlook]
+	default:
+		v.Calendar = Feed{Source: Outlook, Name: nameOf(Outlook), State: Loading}
 	}
 	return v
 }

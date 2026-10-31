@@ -1,5 +1,6 @@
 // Package workfeed is the Work board's data: what GitHub, Slack and Jira have for the owner right now,
-// fetched by the device itself, kept, and handed to the screen (display's render_work.go) as one View.
+// and the owner's Outlook calendar (outlook.go), fetched by the device itself, kept, and handed to the
+// screen (display's render_work.go and render_agenda.go) as one View.
 //
 // Each source is polled on its own clock, slowly: GitHub every two minutes (its notifications say how
 // often they may be asked, X-Poll-Interval, and a 304 for nothing new costs nothing), Slack and Jira
@@ -18,7 +19,8 @@
 //	  "demo": false,
 //	  "github": {"token": "ghp_…"},
 //	  "slack":  {"token": "xoxp-…"},
-//	  "jira":   {"site": "acme.atlassian.net", "email": "me@acme.com", "token": "…", "jql": ""}
+//	  "jira":   {"site": "acme.atlassian.net", "email": "me@acme.com", "token": "…", "jql": ""},
+//	  "outlook": {"client_id": "…", "tenant": "common", "days": 3}
 //	}
 //
 // GitHub's notifications take a classic token with the notifications scope (fine-grained ones are not
@@ -26,5 +28,7 @@
 // fine-grained read-only token is enough for. Slack's token is a user token (xoxp-) of an app installed
 // in the owner's workspace with search:read (mentions), im:read and mpim:read (direct messages),
 // im:history and mpim:history (their last message) and users:read (names). Jira's is an Atlassian API
-// token for the email it belongs to; jql replaces the default "assigned to me and not done".
+// token for the email it belongs to; jql replaces the default "assigned to me and not done". Outlook takes
+// no token here: the board shows a code to sign in with from a phone, once, and the refresh token is kept
+// by the device itself (outlook.go says how to register the app whose client_id goes here).
 package workfeed
