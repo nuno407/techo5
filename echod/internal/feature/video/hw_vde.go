@@ -22,11 +22,12 @@ import (
 // releaser takes a picture's buffer back.
 type releaser interface{ Release(buf int) }
 
-// vdeRun is the decoder of a session and the screen's set of buffers it writes into.
+// vdeRun is what writes a session's pictures into the screen's set of buffers: the decoder, or the
+// cores' pictures read into them (planes.go); close stops it.
 type vdeRun struct {
-	dec  *vde.Decoder
-	bufs PictureBufs
-	set  int
+	close func()
+	bufs  PictureBufs
+	set   int
 }
 
 // playVDE plays the stream on the VDE in the daemon, head being what checkHW read of dec's picture and
@@ -55,7 +56,7 @@ func (s *session) playVDE(dec *decoder, bufs PictureBufs, head, sps []byte, info
 		}
 		return false, nil, err
 	}
-	run.dec, crop = d, d.Crop()
+	run.close, crop = d.Close, d.Crop()
 	f := d.Format()
 	s.mu.Lock()
 	s.dec, s.vde, s.vdeRun = dec, d, run
@@ -125,7 +126,8 @@ func (s *session) vdeErr(err error) error {
 	return err
 }
 
-// closeVDE lets the decoder and its buffers go, once the session is over.
+// closeVDE lets the decoder (or the cores' reading) and the screen's buffers go, once the session is
+// over.
 func (s *session) closeVDE() {
 	s.mu.Lock()
 	run := s.vdeRun
@@ -134,7 +136,7 @@ func (s *session) closeVDE() {
 	if run == nil {
 		return
 	}
-	run.dec.Close()
+	run.close()
 	run.bufs.ReleasePictureBufs(run.set)
 }
 

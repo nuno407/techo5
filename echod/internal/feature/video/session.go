@@ -75,23 +75,24 @@ type session struct {
 	// it. Taken before mu.
 	pauses sync.Mutex
 
-	mu      sync.Mutex
-	cond    *sync.Cond
-	info    Info
-	rate    Rate
-	dec     *decoder
-	hw      *hwPicture // the hardware's pictures (hw.go); nil while the cores decode
-	vde     releaser   // the in-process hardware decoder (hw_vde.go), while it runs
-	vdeRun  *vdeRun
-	ready   []*Frame // decoded, oldest first
-	free    []*Frame
-	made    int  // frames there are buffers for
-	most    int  // frames there may be
-	read    int  // frames read off the pipe
-	videoIn bool // the picture's pipe has ended
-	shown   int
-	dropped int
-	playing bool // started (the first frame has arrived)
+	mu       sync.Mutex
+	cond     *sync.Cond
+	info     Info
+	rate     Rate
+	dec      *decoder
+	hw       *hwPicture // the hardware's pictures (hw.go); nil while the cores decode
+	vde      releaser   // what takes a picture in the screen's buffers back (hw_vde.go, planes.go)
+	vdeRun   *vdeRun
+	planeDst image.Rectangle
+	ready    []*Frame // decoded, oldest first
+	free     []*Frame
+	made     int  // frames there are buffers for
+	most     int  // frames there may be
+	read     int  // frames read off the pipe
+	videoIn  bool // the picture's pipe has ended
+	shown    int
+	dropped  int
+	playing  bool // started (the first frame has arrived)
 
 	// The clock. With sound, it is how far the room has heard (media.Player.Heard) until the sound runs
 	// out, and the wall clock from there; without, the wall clock alone. wallBase is where the wall
@@ -220,7 +221,27 @@ func (s *session) play(insecure bool) (error, bool) {
 		}
 	}
 	if !hw {
-		dec, err = start(s.ctx, DecodeArgs(decoding), true, s.sound)
+		args := DecodeArgs(decoding)
+		p, planar := PlanarFor(info, s.screen)
+		var pool *planePool
+		if planar {
+			// On the cores, but onto the overlay plane at the picture's own size: no scaling or RGB,
+			// read straight into the screen's buffers where it can make them.
+			args = PlaneDecodeArgs(decoding, p)
+			fit := FitIn(info, s.screen)
+			dst := image.Rect(fit.X, fit.Y, fit.X+fit.W, fit.Y+fit.H)
+			if s.screen.Bufs != nil {
+				pool = s.openPlanes(s.screen.Bufs, p, dst)
+			}
+			if pool == nil {
+				size := i420Size(p.W, p.H)
+				s.mu.Lock()
+				s.hw = &hwPicture{w: p.W, h: p.H, size: size, dst: dst}
+				s.most = max(queueBytes/size, 3)
+				s.mu.Unlock()
+			}
+		}
+		dec, err = start(s.ctx, args, true, s.sound)
 		if err != nil {
 			return err, false
 		}
@@ -228,7 +249,13 @@ func (s *session) play(insecure bool) (error, bool) {
 		s.dec = dec
 		s.mu.Unlock()
 		s.startSound(dec)
-		readErr = s.readFrames(dec.video)
+		if pool != nil {
+			stop := context.AfterFunc(s.ctx, pool.stop)
+			readErr = s.readPlanes(dec.video, pool, p)
+			stop()
+		} else {
+			readErr = s.readFrames(dec.video)
+		}
 	}
 	defer stopAll(gst)
 	if s.ctx.Err() != nil {

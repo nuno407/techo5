@@ -29,6 +29,8 @@ type PictureBufs interface {
 	NewPictureBufs(n, w, h int, pitch, size [3]int) (set int, fds [][3]int, err error)
 	// ReleasePictureBufs is the video done with a set; the screen lets it go once none is on show.
 	ReleasePictureBufs(set int)
+	// PictureMem is a buffer's three planes, to write a picture into.
+	PictureMem(set, i int) ([3][]byte, error)
 }
 
 // Fit is where the picture goes on the canvas: W×H at X, Y, the rest black. All even, which the
@@ -232,6 +234,38 @@ func DecodeArgs(d Decoding) []string {
 			"-f", "s16le", "pipe:1")
 	}
 	return a
+}
+
+// PlaneDecodeArgs is DecodeArgs for a screen that shows 4:2:0 pictures on a plane of their own (the
+// Surface RT's KMS overlay): the picture at its own size, its width cut to a multiple of 16 so each of
+// its planes' rows has a width the display takes as a pitch, and in its own 4:2:0, so ffmpeg neither
+// scales it, pads it nor turns it into RGB, and a third of the bytes cross the pipe. The display
+// controller scales it into place as it shows it.
+func PlaneDecodeArgs(d Decoding, p Planar) []string {
+	a := DecodeArgs(d)
+	for i := range a {
+		switch {
+		case i > 0 && a[i-1] == "-vf":
+			a[i] = "fps=fps=" + FrameRate(d.Info.FPS).String() + ":start_time=0," +
+				fmt.Sprintf("crop=%d:%d:0:0,format=yuv420p", p.W, p.H)
+		case i > 0 && a[i-1] == "-pix_fmt":
+			a[i] = "yuv420p"
+		}
+	}
+	return a
+}
+
+// Planar is a picture the cores decode and a plane shows (PlaneDecodeArgs): W×H, a multiple of 16 wide.
+type Planar struct{ W, H int }
+
+// PlanarFor is the picture PlaneDecodeArgs makes of a stream for this screen, if the screen shows
+// 4:2:0 on a plane and the picture suits one: upright, and no larger than the plane scales.
+func PlanarFor(i Info, s Screen) (Planar, bool) {
+	p := Planar{W: i.Width &^ 15, H: i.Height &^ 1}
+	if !s.Planes || s.Rotated || i.Rotation%360 != 0 || p.W < 16 || p.H < 16 || p.W*p.H > 1920*1088 {
+		return Planar{}, false
+	}
+	return p, true
 }
 
 func pixOr(p string) string {

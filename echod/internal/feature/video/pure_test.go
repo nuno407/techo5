@@ -441,3 +441,39 @@ func TestTheDecoderArguments(t *testing.T) {
 		t.Errorf("probe: %q", p)
 	}
 }
+
+// On a screen with a 4:2:0 plane the cores make the picture at its own size, in 4:2:0, for the plane
+// to scale: no scale, pad or RGB in ffmpeg.
+func TestPlaneDecodeArgsKeepThePicturesOwnSize(t *testing.T) {
+	info := Info{VideoIndex: 0, AudioIndex: -1, Width: 854, Height: 480, FPS: 60}
+	scr := Screen{W: 1366, H: 768, PixFmt: "rgba", Planes: true}
+	p, ok := PlanarFor(info, scr)
+	if !ok || p.W != 848 || p.H != 480 {
+		t.Fatalf("planar %+v %v, want 848x480", p, ok)
+	}
+	if p, _ := PlanarFor(Info{Width: 1366, Height: 769}, scr); p.W != 1360 || p.H != 768 {
+		t.Fatalf("planar %+v, want 1360x768", p)
+	}
+	a := strings.Join(PlaneDecodeArgs(Decoding{URL: "http://x/v.mp4", Info: info, Screen: scr}, p), " ")
+	for _, want := range []string{"-vf fps=fps=30/1:start_time=0,crop=848:480:0:0,format=yuv420p", "-pix_fmt yuv420p pipe:3"} {
+		if !strings.Contains(a, want) {
+			t.Errorf("%q not in %s", want, a)
+		}
+	}
+	if strings.Contains(a, "scale") || strings.Contains(a, "rgba") {
+		t.Errorf("scaled or RGB: %s", a)
+	}
+	for _, c := range []struct {
+		name string
+		i    Info
+		s    Screen
+	}{
+		{"no plane", info, Screen{W: 1366, H: 768}},
+		{"rotated stream", Info{Width: 854, Height: 480, Rotation: 90}, scr},
+		{"4K", Info{Width: 3840, Height: 2160}, scr},
+	} {
+		if _, ok := PlanarFor(c.i, c.s); ok {
+			t.Errorf("%s: on the plane", c.name)
+		}
+	}
+}

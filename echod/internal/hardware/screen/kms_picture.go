@@ -33,7 +33,7 @@ type picBuf struct {
 	fds     [3]int
 	pitch   [3]int
 	size    [3]int
-	mem     [3][]byte // mapped for a screenshot only
+	mem     [3][]byte // mapped when asked for: a screenshot, or pictures read into them
 }
 
 // picSet is the buffers of one video.
@@ -176,6 +176,46 @@ func (k *kmsOut) freePicBuf(b picBuf) {
 	}
 }
 
+// mapPicBuf maps picture b's three planes, once. Wants picMu.
+func (k *kmsOut) mapPicBuf(b *picBuf) error {
+	for p := range 3 {
+		if b.mem[p] != nil {
+			continue
+		}
+		mp := make(args, 16)
+		mp.put32(0, b.handles[p])
+		if err := drmIoctl(k.fd(), drmModeMapDumb, mp); err != nil {
+			return fmt.Errorf("MAP_DUMB: %w", err)
+		}
+		mem, err := unix.Mmap(int(k.fd()), int64(mp.u64(8)), b.size[p], unix.PROT_READ|unix.PROT_WRITE, unix.MAP_SHARED)
+		if err != nil {
+			return fmt.Errorf("mmap: %w", err)
+		}
+		b.mem[p] = mem
+	}
+	return nil
+}
+
+// PictureMem is picture i of set gen's three planes, Y, U and V, mapped to be written: for pictures
+// the cores decode, read straight into them. Write-combined: written in order, never read.
+func (d *Device) PictureMem(gen, i int) ([3][]byte, error) {
+	if d.kms == nil {
+		return [3][]byte{}, errors.New("screen: no pictures")
+	}
+	k := d.kms
+	k.picMu.Lock()
+	defer k.picMu.Unlock()
+	set := k.pics
+	if set == nil || set.gen != gen || i < 0 || i >= len(set.bufs) {
+		return [3][]byte{}, errors.New("screen: the picture is gone")
+	}
+	b := &set.bufs[i]
+	if err := k.mapPicBuf(b); err != nil {
+		return [3][]byte{}, err
+	}
+	return b.mem, nil
+}
+
 // PresentPicture shows picture i of set gen, its src rectangle scaled into dst, black around it, the
 // canvas's rectangle over drawn over it (the video's controls). A set that has gone is an error.
 func (d *Device) PresentPicture(gen, i int, src, dst, over image.Rectangle) error {
@@ -217,8 +257,8 @@ func (d *Device) PresentPicture(gen, i int, src, dst, over image.Rectangle) erro
 	return d.controls(over)
 }
 
-// PictureI420 reads picture i of set gen's src rectangle back as I420, for a screenshot: slowly, the
-// buffers being write-combined.
+// PictureI420 reads picture i of set gen's src rectangle back as I420 in GStreamer's layout (I420Size),
+// for a screenshot: slowly, the buffers being write-combined.
 func (d *Device) PictureI420(gen, i int, src image.Rectangle) ([]byte, error) {
 	if d.kms == nil {
 		return nil, errors.New("screen: no pictures")
@@ -233,20 +273,12 @@ func (d *Device) PictureI420(gen, i int, src image.Rectangle) ([]byte, error) {
 	b := &set.bufs[i]
 	src = src.Intersect(image.Rect(0, 0, set.w, set.h))
 	w, h := src.Dx()&^1, src.Dy()&^1
-	out := make([]byte, 0, w*h*3/2)
+	out := make([]byte, 0, I420Size(w, h))
+	strides := [3]int{(w + 3) &^ 3, (w/2 + 3) &^ 3, (w/2 + 3) &^ 3}
+	if err := k.mapPicBuf(b); err != nil {
+		return nil, err
+	}
 	for p := range 3 {
-		if b.mem[p] == nil {
-			mp := make(args, 16)
-			mp.put32(0, b.handles[p])
-			if err := drmIoctl(k.fd(), drmModeMapDumb, mp); err != nil {
-				return nil, err
-			}
-			mem, err := unix.Mmap(int(k.fd()), int64(mp.u64(8)), b.size[p], unix.PROT_READ, unix.MAP_SHARED)
-			if err != nil {
-				return nil, err
-			}
-			b.mem[p] = mem
-		}
 		x0, y0, pw, ph := src.Min.X, src.Min.Y, w, h
 		if p > 0 {
 			x0, y0, pw, ph = x0/2, y0/2, w/2, h/2
@@ -257,6 +289,7 @@ func (d *Device) PictureI420(gen, i int, src image.Rectangle) ([]byte, error) {
 				return nil, syscall.EINVAL
 			}
 			out = append(out, b.mem[p][at:at+pw]...)
+			out = append(out, make([]byte, strides[p]-pw)...)
 		}
 	}
 	return out, nil
