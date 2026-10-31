@@ -31,6 +31,7 @@ const (
 
 	fourccYUV420   = 0x32315559 // 'YU12'
 	fourccARGB8888 = 0x34325241 // 'AR24'
+	fourccABGR8888 = 0x34324241 // 'AB24'
 )
 
 // planeKind is a plane the CRTC can use: its type and the formats it takes.
@@ -353,9 +354,14 @@ func (d *Device) controls(over image.Rectangle) error {
 		if err != nil {
 			return fmt.Errorf("screen: the controls' buffer: %w", err)
 		}
-		// newBuf's framebuffer is XRGB; the controls need their alpha.
+		// newBuf's framebuffer has no alpha; the controls need theirs. ABGR8888 is the canvas's own byte
+		// order, where the display takes it as the pages' XBGR.
 		k.rmFB(b.fb)
-		fb, err := k.addFB2(b.handle, d.panelW, d.panelH, k.pitch, fourccARGB8888)
+		format := uint32(fourccARGB8888)
+		if k.xbgr {
+			format = fourccABGR8888
+		}
+		fb, err := k.addFB2(b.handle, d.panelW, d.panelH, k.pitch, format)
 		if err != nil {
 			k.freeBuf(b)
 			return fmt.Errorf("screen: the controls' framebuffer: %w", err)
@@ -373,8 +379,12 @@ func (d *Device) controls(over image.Rectangle) error {
 	row := d.row[:n]
 	for y := over.Min.Y; y < over.Max.Y; y++ {
 		src := c.Pix[y*c.Stride+over.Min.X*4 : y*c.Stride+over.Max.X*4]
-		for i := 0; i < n; i += 4 {
-			row[i], row[i+1], row[i+2], row[i+3] = src[i+2], src[i+1], src[i], src[i+3]
+		if k.xbgr {
+			copy(row, src)
+		} else {
+			for i := 0; i < n; i += 4 {
+				row[i], row[i+1], row[i+2], row[i+3] = src[i+2], src[i+1], src[i], src[i+3]
+			}
 		}
 		at := y*v.ctlPitch + over.Min.X*4
 		if string(v.ctlShadow[at:at+n]) == string(row) {

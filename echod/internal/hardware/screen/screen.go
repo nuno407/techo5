@@ -117,6 +117,13 @@ type Device struct {
 	pending chan struct{}
 	pendErr error
 
+	// sums is, on KMS, a checksum of each row of each page in place of shadow (kms_present.go), and
+	// sumsOK whether a page's are its own yet.
+	sums   [][]uint64
+	sumsOK []bool
+	rowSum bool     // present by sums
+	runs   [][2]int // scratch: rows for the 2D engine
+
 	// stale marks a page that a frame (PresentFrame) was painted on, so it no longer holds what its
 	// shadow says: the next Present onto it writes every row.
 	stale []bool
@@ -328,6 +335,10 @@ func (d *Device) present(img *image.RGBA) error {
 		return err
 	}
 
+	if d.rowSum && !rotated {
+		d.presentSums(img, dst, next)
+		return d.pan(next)
+	}
 	w, h := img.Rect.Dx(), img.Rect.Dy()
 	sr, sg, sb, sa := d.shift[0], d.shift[1], d.shift[2], d.shift[3]
 	// The common layouts row by row, a copy and at most a swap of red and blue, rather than a pixel

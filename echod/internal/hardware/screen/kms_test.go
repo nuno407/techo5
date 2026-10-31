@@ -209,3 +209,51 @@ func TestI420IsCopiedAtThePlanesPitch(t *testing.T) {
 		}
 	}
 }
+
+// On KMS with XBGR pages a row goes as it is, and only a row whose checksum differs from what that
+// page holds is written: each page keeps its own.
+func TestKMSRowSumsWriteOnlyChangedRowsAsTheyAre(t *testing.T) {
+	if rotated {
+		t.Skip("the Surface RT's panel is not turned")
+	}
+	const w, h = 64, 80
+	d := &Device{pages: 2, panelW: w, panelH: h, line: w*4 + 32, shift: [4]uint{0, 8, 16, 24}, rowSum: true}
+	d.pageBytes = d.line * h
+	d.page = 1
+	d.mem = make([]byte, 2*d.pageBytes)
+	d.canvas = newCanvas(w, h)
+
+	paint(d, 3, 255)
+	paint(d, 70, 7) // in the other core's half
+	if err := d.present(d.canvas); err != nil {
+		t.Fatal(err)
+	}
+	if d.page != 0 || d.mem[3*d.line] != 255 || d.mem[3*d.line+3] != 255 || d.mem[70*d.line] != 7 {
+		t.Fatalf("frame 1: page %d, row 3 %v", d.page, d.mem[3*d.line:3*d.line+4])
+	}
+	if err := d.present(d.canvas); err != nil {
+		t.Fatal(err)
+	}
+	if d.page != 1 || d.mem[d.pageBytes+3*d.line] != 255 || d.mem[d.pageBytes+70*d.line] != 7 {
+		t.Fatal("frame 2 did not write page 1's first frame whole")
+	}
+	// Behind the sums' back: a row the frame does not change is not rewritten, one it does is.
+	d.mem[5*d.line] = 9
+	d.mem[71*d.line] = 9
+	paint(d, 4, 200)
+	if err := d.present(d.canvas); err != nil {
+		t.Fatal(err)
+	}
+	if d.page != 0 || d.mem[4*d.line] != 200 || d.mem[5*d.line] != 9 || d.mem[71*d.line] != 9 {
+		t.Fatalf("frame 3: page %d, row 4 %d, row 5 %d", d.page, d.mem[4*d.line], d.mem[5*d.line])
+	}
+	// A frame painted over a page (a video's) makes the next present write it whole.
+	d.markStale(1)
+	d.mem[d.pageBytes+6*d.line] = 9
+	if err := d.present(d.canvas); err != nil {
+		t.Fatal(err)
+	}
+	if d.mem[d.pageBytes+6*d.line] != 0 {
+		t.Fatal("a stale page was not written whole")
+	}
+}

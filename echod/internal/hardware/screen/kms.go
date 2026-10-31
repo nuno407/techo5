@@ -157,10 +157,15 @@ type kmsOut struct {
 	mode  kmsMode
 	pitch int
 	bufs  []kmsBuf
+	xbgr  bool      // the pages are XBGR8888, the canvas's byte order, not XRGB8888
 	set   bool      // the CRTC shows one of ours (the first pan sets the mode)
 	flip  bool      // a flip was asked for and has not completed
 	slow  int       // flips that timed out, for the log
 	video *kmsVideo // the planes for a video (kms_video.go); nil without an overlay for it
+
+	// The 2D engine (gr2d.go), once asked for; g2dFailed once it could not be had.
+	g2d       *gr2d
+	g2dFailed bool
 
 	// The hardware decoder's picture buffers (kms_picture.go), made and let go by the video's goroutine.
 	picMu  sync.Mutex
@@ -315,18 +320,26 @@ func (k *kmsOut) newBuf(w, h int) (kmsBuf, error) {
 	if k.pitch == 0 {
 		k.pitch = pitch
 	}
-	fb := make(args, 28)
-	fb.put32(4, uint32(w))
-	fb.put32(8, uint32(h))
-	fb.put32(12, uint32(pitch))
-	fb.put32(16, 32)
-	fb.put32(20, 24)
-	fb.put32(24, b.handle)
-	if err := drmIoctl(k.fd(), drmModeAddFB, fb); err != nil {
-		k.freeBuf(b)
-		return kmsBuf{}, fmt.Errorf("ADDFB: %w", err)
+	// XBGR8888 where the display takes it: the canvas's own byte order (kms_present.go).
+	if fb, err := k.addFB2(b.handle, w, h, pitch, fourccXBGR8888); err == nil && (k.xbgr || len(k.bufs) == 0) {
+		k.xbgr, b.fb = true, fb
+	} else {
+		if err == nil {
+			k.rmFB(fb)
+		}
+		fb := make(args, 28)
+		fb.put32(4, uint32(w))
+		fb.put32(8, uint32(h))
+		fb.put32(12, uint32(pitch))
+		fb.put32(16, 32)
+		fb.put32(20, 24)
+		fb.put32(24, b.handle)
+		if err := drmIoctl(k.fd(), drmModeAddFB, fb); err != nil {
+			k.freeBuf(b)
+			return kmsBuf{}, fmt.Errorf("ADDFB: %w", err)
+		}
+		b.fb = fb.u32(0)
 	}
-	b.fb = fb.u32(0)
 	if err := k.mapBuf(&b, size); err != nil {
 		k.freeBuf(b)
 		return kmsBuf{}, err
@@ -503,6 +516,10 @@ func (k *kmsOut) close() {
 		}
 		k.video = nil
 	}
+	if k.g2d != nil {
+		k.g2d.close()
+		k.g2d = nil
+	}
 	for _, b := range k.bufs {
 		k.freeBuf(b)
 	}
@@ -539,14 +556,20 @@ func openKMSDevice() (*Device, error) {
 			return nil, fmt.Errorf("screen: a dumb buffer of %d bytes, want %d", len(b.mem), d.pageBytes)
 		}
 	}
-	d.shift = [4]uint{16, 8, 0, 24} // XRGB8888, as the framebuffer emulation's
-	// Dumb buffers come zeroed, so each page's shadow starts as zeros and is never read back from the
-	// buffer itself: write-combined memory reads at 30 MB/s.
-	d.shadow = make([][]byte, d.pages)
-	for i := range d.shadow {
-		d.shadow[i] = make([]byte, d.pageBytes)
-	}
 	d.row = make([]byte, d.panelW*4)
+	if k.xbgr {
+		// The canvas's byte order: rows go as they are, told apart by their checksums (kms_present.go).
+		d.shift = [4]uint{0, 8, 16, 24}
+		d.rowSum = true
+	} else {
+		d.shift = [4]uint{16, 8, 0, 24} // XRGB8888, as the framebuffer emulation's
+		// Dumb buffers come zeroed, so each page's shadow starts as zeros and is never read back from the
+		// buffer itself: write-combined memory reads at 30 MB/s.
+		d.shadow = make([][]byte, d.pages)
+		for i := range d.shadow {
+			d.shadow[i] = make([]byte, d.pageBytes)
+		}
+	}
 	d.page = 1 // so the first frame goes to page 0
 	if rotated {
 		d.canvas = image.NewRGBA(image.Rect(0, 0, d.panelH, d.panelW))
@@ -582,14 +605,20 @@ func (d *Device) leaveKMS() {
 	k := d.kms
 	d.kms = nil
 	_ = k.wait()
-	if d.page < len(d.shadow) && d.shadow[d.page] != nil {
-		copyToFB(d.shadow[d.page], d.line, d.panelW, d.panelH)
+	switch {
+	case d.page < len(d.shadow) && d.shadow[d.page] != nil:
+		copyToFB(d.shadow[d.page], d.line, d.panelW, d.panelH, false)
+	case k.xbgr && d.page < len(k.bufs) && k.set:
+		// Read back from the page itself, once: slow (write-combined), but there is no copy of it.
+		page := append([]byte(nil), k.bufs[d.page].mem[:d.pageBytes]...)
+		copyToFB(page, d.line, d.panelW, d.panelH, true)
 	}
 	k.close()
 }
 
-// copyToFB writes a frame of rows line bytes apart into /dev/fb0, where it is the same size.
-func copyToFB(src []byte, line, w, h int) {
+// copyToFB writes a frame of rows line bytes apart into /dev/fb0, where it is the same size; swap is a
+// frame in XBGR8888, which the emulation's XRGB8888 has red and blue the other way round in.
+func copyToFB(src []byte, line, w, h int, swap bool) {
 	f, err := os.OpenFile(altPath, os.O_RDWR, 0)
 	if err != nil {
 		return
@@ -610,6 +639,12 @@ func copyToFB(src []byte, line, w, h int) {
 	}
 	defer unix.Munmap(mem)
 	for y := range h {
-		copy(mem[y*fbLine:y*fbLine+w*4], src[y*line:y*line+w*4])
+		row := src[y*line : y*line+w*4]
+		if swap {
+			for i := 0; i+3 < len(row); i += 4 {
+				row[i], row[i+2] = row[i+2], row[i]
+			}
+		}
+		copy(mem[y*fbLine:y*fbLine+w*4], row)
 	}
 }
