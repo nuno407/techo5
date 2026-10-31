@@ -12,7 +12,6 @@ import (
 
 	"github.com/HuskerMinion/techo5/echod/internal/config"
 	"github.com/HuskerMinion/techo5/echod/internal/feature/setup"
-	"github.com/HuskerMinion/techo5/echod/internal/layout"
 	"github.com/HuskerMinion/techo5/echod/internal/lib/fonts"
 )
 
@@ -31,11 +30,6 @@ func screenFont() string {
 	return v
 }
 
-// textScale sizes the text against the layout. The layout scales with the panel's width (drawnFor),
-// which on the Surface RT's 10.6" 1366x768 panel makes text half again as tall as the Show 8 draws it;
-// 0.8 brings it near the Show 8's on the glass while the boxes keep filling the screen.
-var textScale = map[bool]float64{false: 1, true: 0.8}[layout.SurfaceRT()]
-
 // fontIndex is the font in force among fonts.Families.
 func fontIndex() int { return fonts.Index(config.Get().Screen.Font) }
 
@@ -43,7 +37,6 @@ func fontIndex() int { return fonts.Index(config.Get().Screen.Font) }
 // logged and drawn in Go instead; nil only if Go cannot be made either, which draws nothing, as a face
 // that failed always has here.
 func fontFace(name string, bold bool, px float64) font.Face {
-	px *= textScale
 	f, err := fonts.Face(name, bold, px)
 	if err == nil {
 		return f
