@@ -47,6 +47,13 @@ type Frame struct {
 	W, H int
 	Dst  image.Rectangle
 
+	// Picture is a picture the decoder wrote into the screen's own buffers (hw_vde.go): Pix is nil,
+	// and the screen shows buffer Buf of its set Set, its Crop rectangle (W×H) scaled into Dst
+	// (hardware/screen.PresentPicture).
+	Picture  bool
+	Set, Buf int
+	Crop     image.Rectangle
+
 	owner *session
 }
 
@@ -74,7 +81,9 @@ type session struct {
 	rate    Rate
 	dec     *decoder
 	hw      *hwPicture // the hardware's pictures (hw.go); nil while the cores decode
-	ready   []*Frame   // decoded, oldest first
+	vde     releaser   // the in-process hardware decoder (hw_vde.go), while it runs
+	vdeRun  *vdeRun
+	ready   []*Frame // decoded, oldest first
 	free    []*Frame
 	made    int  // frames there are buffers for
 	most    int  // frames there may be
@@ -174,6 +183,7 @@ func (s *session) stop(quiet bool) {
 
 func (s *session) play(insecure bool) (error, bool) {
 	began := time.Now()
+	defer s.closeVDE()
 	// The network it may reach is everything but the device itself, by the kernel's fence or through
 	// the daemon's proxy (fence.go, guard.go): nothing is decoded until one of them holds.
 	proxy, err := netGuard(s.ctx)
@@ -394,7 +404,7 @@ func (s *session) next() (*Frame, time.Duration) {
 		return nil, 10 * time.Millisecond
 	}
 	for len(s.ready) > 1 && s.at(s.ready[1].N) <= now {
-		s.free = append(s.free, s.ready[0])
+		s.recycleLocked(s.ready[0])
 		s.ready = s.ready[1:]
 		s.dropped++
 	}
@@ -414,9 +424,21 @@ func (s *session) done(fr *Frame) {
 		return
 	}
 	s.mu.Lock()
-	s.free = append(s.free, fr)
+	s.recycleLocked(fr)
 	s.cond.Broadcast()
 	s.mu.Unlock()
+}
+
+// recycleLocked takes a frame back for another picture: a buffer of the frames' own, or a decoder's
+// picture back to the decoder. Wants mu.
+func (s *session) recycleLocked(fr *Frame) {
+	if fr.Picture {
+		if s.vde != nil {
+			s.vde.Release(fr.Buf)
+		}
+		return
+	}
+	s.free = append(s.free, fr)
 }
 
 // clock is how far into the video the room is.

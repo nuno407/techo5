@@ -195,12 +195,12 @@ func i420Size(w, h int) int {
 // a stream that starts on a keyframe, which ffmpeg's copy does.
 const hwCheckBytes = 2 << 20
 
-// startHW runs the hardware path: ffmpeg's dec (already started with HWDecodeArgs) has its picture read
-// until its parameter sets say whether the VDE takes it. If it does, gst-launch is started on it, and
-// the returned file is the pictures; if not, the error says why, and nothing more is started.
-func (s *session) startHW(dec *decoder) (*os.File, *decoder, error) {
+// checkHW reads the start of ffmpeg's dec (already started with HWDecodeArgs) until its parameter sets
+// say whether the VDE takes it: the start read, and the first SPS, if it does; if not,
+// the error says why.
+func (s *session) checkHW(dec *decoder) (head, sps []byte, err error) {
 	var check h264Check
-	head := make([]byte, 0, 64<<10)
+	head = make([]byte, 0, 64<<10)
 	buf := make([]byte, 32<<10)
 	_ = dec.video.SetReadDeadline(time.Now().Add(probeTimeout))
 	for !check.done() && len(head) < hwCheckBytes {
@@ -221,6 +221,12 @@ func (s *session) startHW(dec *decoder) (*os.File, *decoder, error) {
 	if check.err != nil {
 		return nil, nil, check.err
 	}
+	return head, check.spsNAL, nil
+}
+
+// startHW starts gst-launch on the stream, head being what checkHW read of it, the rest still to come
+// from dec: the returned file is the pictures.
+func (s *session) startHW(dec *decoder, head []byte) (*os.File, *decoder, error) {
 	gid, err := hwDeviceAccess()
 	if err != nil {
 		return nil, nil, fmt.Errorf("the decoder's device: %w", err)
@@ -295,7 +301,21 @@ func (s *session) playHW(info Info, d Decoding) (played bool, readErr error, dec
 		slog.Warn("video: no hardware decode", "id", s.id, "err", err)
 		return false, nil, nil, nil
 	}
-	frames, gst, err := s.startHW(dec)
+	head, sps, err := s.checkHW(dec)
+	if err != nil {
+		slog.Info("video: decoding on the cores", "id", s.id, "why", s.scrub(err))
+		dec.stop()
+		return false, nil, nil, nil
+	}
+	// In the daemon, into the screen's own buffers (hw_vde.go); GStreamer where that cannot start.
+	if bufs := s.screen.Bufs; bufs != nil && os.Getenv("TECHO5_VIDEO_DECODER") != "gst" {
+		started, readErr, err := s.playVDE(dec, bufs, head, sps, info)
+		if started {
+			return true, readErr, dec, nil
+		}
+		slog.Info("video: the decoder in the daemon did not start; GStreamer then", "id", s.id, "err", err)
+	}
+	frames, gst, err := s.startHW(dec, head)
 	if err != nil {
 		slog.Info("video: decoding on the cores", "id", s.id, "why", s.scrub(err))
 		dec.stop()

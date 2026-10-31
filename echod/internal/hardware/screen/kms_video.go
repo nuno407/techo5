@@ -53,6 +53,7 @@ type kmsVideo struct {
 	yuv             []yuvBuf
 	next            int  // the YUV buffer to fill next
 	on              bool // the overlay shows the video
+	showGen         int  // the set of decoder pictures it shows one of (kms_picture.go), 0 for a copied one
 	ctl             kmsBuf
 	ctlRect         image.Rectangle // where the controls' plane is, empty while it is off
 	ctlShadow       []byte
@@ -280,10 +281,16 @@ func (d *Device) PresentYUV(pix []byte, w, h int, dst, over image.Rectangle) err
 	}
 	b := v.yuv[v.next]
 	copyI420(b.mem, b.pitch, pix, w, h)
-	if err := k.setPlane(v.overlay, b.fb, dst, image.Rect(0, 0, w, h)); err != nil {
+	k.picMu.Lock()
+	err := k.setPlane(v.overlay, b.fb, dst, image.Rect(0, 0, w, h))
+	if err == nil {
+		v.on, v.showGen = true, 0
+		k.dropPictures(false) // a decoder's set it may have been showing
+	}
+	k.picMu.Unlock()
+	if err != nil {
 		return fmt.Errorf("screen: SETPLANE: %w", err)
 	}
-	v.on = true
 	v.next = (v.next + 1) % len(v.yuv)
 	return d.controls(over)
 }
@@ -393,10 +400,13 @@ func (d *Device) leaveVideo() {
 		return
 	}
 	k, v := d.kms, d.kms.video
+	k.picMu.Lock()
 	if v.on {
 		_ = k.setPlane(v.overlay, 0, image.Rectangle{}, image.Rectangle{})
-		v.on = false
+		v.on, v.showGen = false, 0
 	}
+	k.dropPictures(false)
+	k.picMu.Unlock()
 	if !v.ctlRect.Empty() {
 		_ = k.setPlane(v.cursor, 0, image.Rectangle{}, image.Rectangle{})
 		v.ctlRect = image.Rectangle{}
@@ -407,7 +417,7 @@ func (d *Device) leaveVideo() {
 
 func (d *Device) freeYUV() {
 	v := d.kms.video
-	if v.on {
+	if v.on && v.showGen == 0 {
 		_ = d.kms.setPlane(v.overlay, 0, image.Rectangle{}, image.Rectangle{})
 		v.on = false
 	}

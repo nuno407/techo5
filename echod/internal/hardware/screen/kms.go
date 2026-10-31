@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"sync"
 	"syscall"
 	"time"
 	"unsafe"
@@ -160,6 +161,11 @@ type kmsOut struct {
 	flip  bool      // a flip was asked for and has not completed
 	slow  int       // flips that timed out, for the log
 	video *kmsVideo // the planes for a video (kms_video.go); nil without an overlay for it
+
+	// The hardware decoder's picture buffers (kms_picture.go), made and let go by the video's goroutine.
+	picMu  sync.Mutex
+	picGen int
+	pics   *picSet
 }
 
 // openKMS opens the first card with a connected connector and sets up two pages in its native mode.
@@ -482,6 +488,12 @@ func (k *kmsOut) crtcIndex() int {
 
 func (k *kmsOut) close() {
 	_ = k.wait()
+	k.picMu.Lock()
+	if k.pics != nil {
+		k.pics.done = true
+		k.dropPictures(true)
+	}
+	k.picMu.Unlock()
 	if v := k.video; v != nil {
 		for _, b := range v.yuv {
 			k.freeBuf(b.kmsBuf)

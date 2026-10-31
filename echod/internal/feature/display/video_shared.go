@@ -175,6 +175,9 @@ func (p *videoPainter) paint(ctx context.Context, dev *screen.Device, poke <-cha
 // presentVideoFrame puts a video frame on the panel: a hardware decoder's picture on its plane, any
 // other as a frame in the panel's pixels.
 func presentVideoFrame(dev *screen.Device, fr *video.Frame, over image.Rectangle) error {
+	if fr.Picture {
+		return dev.PresentPicture(fr.Set, fr.Buf, fr.Crop, fr.Dst, over)
+	}
 	if fr.YUV {
 		return dev.PresentYUV(fr.Pix, fr.W, fr.H, fr.Dst, over)
 	}
@@ -185,7 +188,14 @@ func presentVideoFrame(dev *screen.Device, fr *video.Frame, over image.Rectangle
 // way up, with the canvas (the controls) over it.
 func (p *videoPainter) shot(dev *screen.Device, canvas *image.RGBA) *image.RGBA {
 	img := image.NewRGBA(canvas.Rect)
-	if fr := p.last; fr != nil && fr.YUV {
+	if fr := p.last; fr != nil && fr.Picture && dev != nil {
+		// Read back from the screen's buffer, as I420 of the shown part.
+		if pix, err := dev.PictureI420(fr.Set, fr.Buf, fr.Crop); err == nil {
+			c := *fr
+			c.Pix, c.W, c.H = pix, fr.Crop.Dx()&^1, fr.Crop.Dy()&^1
+			yuvShot(img, &c)
+		}
+	} else if fr != nil && fr.YUV {
 		yuvShot(img, fr)
 	} else if fr != nil && dev != nil {
 		pw, ph := dev.FrameSize()

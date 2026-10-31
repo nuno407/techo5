@@ -17,6 +17,18 @@ type Screen struct {
 	// Planes is whether the screen shows the hardware decoder's YUV pictures on a plane of their own
 	// (hardware/screen.PresentYUV): the Surface RT's KMS.
 	Planes bool
+	// Bufs is the screen's buffers the hardware decoder writes its pictures into, for it to show them
+	// where they were written (hw_vde.go); nil where it has none.
+	Bufs PictureBufs
+}
+
+// PictureBufs is the screen's buffers for the decoder's pictures (hardware/screen.Device on KMS).
+type PictureBufs interface {
+	// NewPictureBufs makes n buffers for w×h pictures of these plane pitches and sizes: the set's
+	// number, and each buffer's dmabufs (Y, U, V).
+	NewPictureBufs(n, w, h int, pitch, size [3]int) (set int, fds [][3]int, err error)
+	// ReleasePictureBufs is the video done with a set; the screen lets it go once none is on show.
+	ReleasePictureBufs(set int)
 }
 
 // Fit is where the picture goes on the canvas: W×H at X, Y, the rest black. All even, which the

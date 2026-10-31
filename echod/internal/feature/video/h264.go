@@ -17,7 +17,8 @@ import (
 type h264Check struct {
 	sps, pps bool
 	profile  int
-	err      error // why the hardware cannot decode it; nil when it can
+	spsNAL   []byte // the first SPS, for the decoder
+	err      error  // why the hardware cannot decode it; nil when it can
 }
 
 // done is whether both parameter sets have been seen, or the stream already ruled out.
@@ -35,6 +36,7 @@ func (c *h264Check) feed(b []byte) {
 				continue
 			}
 			c.sps, c.profile = true, int(nal[1])
+			c.spsNAL = append([]byte(nil), nal...)
 			if c.profile != 66 && c.profile != 77 {
 				c.err = fmt.Errorf("H.264 profile %d (the hardware takes Baseline and Main)", c.profile)
 			}

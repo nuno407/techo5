@@ -188,3 +188,13 @@ func (d *Device) CanPresentYUV() bool { return false }
 func (d *Device) PresentYUV([]byte, int, int, image.Rectangle, image.Rectangle) error {
 	return errors.New("screen: no video plane")
 }
+
+// PresentPicture is not offered on a panel (CanPresentYUV).
+func (d *Device) PresentPicture(int, int, image.Rectangle, image.Rectangle, image.Rectangle) error {
+	return errors.New("screen: no video plane")
+}
+
+// PictureI420 is not offered on a panel (CanPresentYUV).
+func (d *Device) PictureI420(int, int, image.Rectangle) ([]byte, error) {
+	return nil, errors.New("screen: no video plane")
+}
