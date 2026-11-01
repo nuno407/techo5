@@ -29,6 +29,7 @@ entry. The slots, their states and the trial are the surface_rt project's too (i
 | Boot | no initramfs: ext4, the eMMC and vfat are built in, so the entry says `root=PARTUUID=<slot> rootfstype=ext4 rootwait=30 rw` (slotctl writes it for a slot whose ESP directory has no `initramfs`; postmarketOS slots keep theirs). A root that never appears panics after 30 s and `panic=10` reboots |
 | init | `etc/inittab`: `srt-early.sh`, then `boot.sh`, then `srt-late.sh`, then the daemon (`techo5-run`) and a getty on ttyS0 |
 | Watchdog | `srt-early.sh` starts busybox `watchdog -T 100 -t 30 /dev/watchdog0` (tps65911_wdt) first thing, in place of systemd's `RuntimeWatchdogSec` |
+| CPU frequency | `srt-early.sh` sets ondemand (up threshold 80) with a 475 MHz floor: schedutil holds the cores at 1.4 GHz on this kernel, and the tablet ran hot |
 | Mounts | `/data` = SRT_DATA (p4, shared by both slots, e2fsck -p first), `/boot` = SRT_ESP (p1); `/dev` is the kernel's devtmpfs |
 | Modules | kmod's modprobe (the modules are `.ko.zst`): a coldplug pass over every `modalias`, `etc/modules`, then mdev as the hotplug helper (`etc/mdev.conf` loads each new device's driver) |
 | Wi-Fi | mwifiex's `mlan0` renamed `wlan0` (TECHO5's scripts drive wlan0) and given the address NetworkManager used (`/data/techo5-linux/wifi-mac`), so the router keeps the lease; then TECHO5's own way: `wpa_supplicant` (Alpine's 2.11) with `/run/wpa`, udhcpc, `techo5-net`, the network keeper. `/data/techo5-linux/wpa_supplicant.conf` |

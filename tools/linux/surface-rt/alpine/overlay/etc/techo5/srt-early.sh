@@ -78,6 +78,22 @@ sed 's/#.*//' /etc/modules 2>/dev/null | xargs -r modprobe -q -a 2>/dev/null
 coldplug
 log "modules: $(wc -l < /proc/modules) loaded"
 
+# --- CPU frequency (tegra20-cpufreq, loaded above): schedutil, the kernel's default, holds all four
+# cores at 1.4 GHz on this kernel however idle they are (no sugov thread; the clamp for RT tasks at 0
+# changes nothing), and with power-gated idle disabled (the secure firmware sets no resume address)
+# the tablet then runs hot: tsensor 58-61 °C, the skin 43-46. ondemand with a 475 MHz floor sits at
+# 475-760 MHz, tsensor 51 °C and the skin 40; the wake word stays at 12% of a core and 8-10 ms worst
+# frame (the 51 MHz floor tripled its frame time and gave 40-50 ms worst ones).
+p=/sys/devices/system/cpu/cpufreq/policy0
+if [ -w $p/scaling_governor ] && echo "${SRT_CPU_GOVERNOR:-ondemand}" > $p/scaling_governor 2>/dev/null; then
+	[ -w /sys/devices/system/cpu/cpufreq/ondemand/up_threshold ] &&
+		echo "${SRT_CPU_UP_THRESHOLD:-80}" > /sys/devices/system/cpu/cpufreq/ondemand/up_threshold
+	echo "${SRT_CPU_MIN_KHZ:-475000}" > $p/scaling_min_freq 2>/dev/null
+	log "cpufreq: $(cat $p/scaling_governor), $(cat $p/scaling_min_freq)-$(cat $p/scaling_max_freq) kHz"
+else
+	log "cpufreq: governor ${SRT_CPU_GOVERNOR:-ondemand} not set"
+fi
+
 # --- SSH for admin (keys only, no root), kept running. Host keys on /data, shared by both slots
 # (/etc/dropbear links there; install-slot.sh converts the OpenSSH ones postmarketOS had).
 mkdir -p /data/techo5-linux/dropbear
