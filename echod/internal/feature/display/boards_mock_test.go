@@ -39,8 +39,8 @@ func TestMockBoards(t *testing.T) {
 		png.Encode(f, img)
 	}
 	work := workfeed.DemoView(now)
-	save("work", scene{now: now, phase: "idle", board: boardView{name: boardWork, work: work}})
-	save("work-card", scene{now: now, phase: "idle", board: boardView{name: boardWork, work: work, detail: work.Feeds[0].Items[0].ID}})
+	save("work", scene{now: now, phase: "idle", board: boardView{name: boardWork, data: work}})
+	save("work-card", scene{now: now, phase: "idle", board: boardView{name: boardWork, data: work, detail: work.Feeds[0].Items[0].ID}})
 
 	lat, lon := os.Getenv("MOCK_LAT"), os.Getenv("MOCK_LON")
 	if lat == "" {
@@ -81,7 +81,7 @@ func TestMockBoards(t *testing.T) {
 				}
 			}
 		}
-		save(name, scene{now: time.Now(), phase: "idle", board: boardView{name: boardSky, sky: v, selected: sel}})
+		save(name, scene{now: time.Now(), phase: "idle", board: boardView{name: boardSky, data: v, selected: sel}})
 		t.Logf("%s: %d aircraft from %s, note %q", name, len(v.Aircraft), v.Source, v.Note)
 	}
 	shot("sky", true)

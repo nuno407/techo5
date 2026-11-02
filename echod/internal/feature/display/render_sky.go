@@ -55,7 +55,7 @@ func altText(a skyview.Aircraft) string {
 }
 
 func (r *renderer) skyPage(s scene) []boardZone {
-	v := s.board.sky
+	v, _ := s.board.data.(skyview.View)
 	fc := r.faces()
 	if !v.HomeOK {
 		zones := r.boardBar(s, "Sky", false, false)

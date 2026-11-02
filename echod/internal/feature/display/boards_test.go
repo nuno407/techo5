@@ -36,11 +36,11 @@ func TestBoardsDraw(t *testing.T) {
 		SignIn: &workfeed.SignIn{Code: "F7KQ2PLMX", URL: "https://microsoft.com/devicelogin", Expires: at.Add(14 * time.Minute)}}
 	off.Calendar = workfeed.Feed{Source: workfeed.Outlook, Name: "Outlook", State: workfeed.Off, Setup: `Add "outlook": {"client_id": "…"} to /data/misc/techo5/work.json`}
 	scenes := map[string]scene{
-		"work-signin":  {now: at, phase: "idle", board: boardView{name: boardWork, work: signIn}},
-		"work-meeting": {now: at, phase: "idle", board: boardView{name: boardWork, work: work, detail: work.Calendar.Events[1].ID}},
-		"work":         {now: at, phase: "idle", board: boardView{name: boardWork, work: work}},
-		"work-card":    {now: at, phase: "idle", board: boardView{name: boardWork, work: work, detail: work.Feeds[1].Items[0].ID}},
-		"work-off":     {now: at, phase: "idle", board: boardView{name: boardWork, work: off}},
+		"work-signin":  {now: at, phase: "idle", board: boardView{name: boardWork, data: signIn}},
+		"work-meeting": {now: at, phase: "idle", board: boardView{name: boardWork, data: work, detail: work.Calendar.Events[1].ID}},
+		"work":         {now: at, phase: "idle", board: boardView{name: boardWork, data: work}},
+		"work-card":    {now: at, phase: "idle", board: boardView{name: boardWork, data: work, detail: work.Feeds[1].Items[0].ID}},
+		"work-off":     {now: at, phase: "idle", board: boardView{name: boardWork, data: off}},
 		"sky":          {now: at, phase: "idle", board: boardView{name: boardSky, selected: "a"}},
 	}
 	dir := os.Getenv("SHOW_PREVIEW")
@@ -52,10 +52,11 @@ func TestBoardsDraw(t *testing.T) {
 			img := image.NewRGBA(image.Rect(0, 0, panel.wide, panel.high))
 			r := newRenderer(img)
 			if s.board.name == boardSky {
-				s.board.sky = skyview.View{Zoom: 9, W: panel.wide, H: panel.high, HomeOK: true, HomeLat: 38.72, HomeLon: -9.14,
+				v := skyview.View{Zoom: 9, W: panel.wide, H: panel.high, HomeOK: true, HomeLat: 38.72, HomeLon: -9.14,
 					Aircraft: planes, Source: "adsb.lol", Credit: "© OpenStreetMap contributors © CARTO"}
 				x, y := skyWorld(38.72, -9.14, 9)
-				s.board.sky.X0, s.board.sky.Y0 = x-float64(panel.wide)/2, y-float64(panel.high)/2
+				v.X0, v.Y0 = x-float64(panel.wide)/2, y-float64(panel.high)/2
+				s.board.data = v
 			}
 			r.draw(s)
 			boardHits.Lock()

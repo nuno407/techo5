@@ -133,6 +133,8 @@ type Display struct {
 	clock  *esphome.Select
 	// clockStyleSel is Clock style, how the clock looks all day (clock_style.go).
 	clockStyleSel *esphome.Select
+	// idleBoardSel is Idle screen, the clock or a board in its place (boards.go).
+	idleBoardSel *esphome.Select
 	// fontSel is Screen font, the font of every word the screen draws (font.go).
 	fontSel *esphome.Select
 	// textSizeSel is Screen text size, how large those words are drawn (text_size.go).
@@ -495,6 +497,7 @@ func build() *Display {
 	d.buildRoomLights()
 	d.clock = clockSelect(d.wake)
 	d.clockStyleSel = clockStyleSelect(d)
+	d.idleBoardSel = idleBoardSelect(d)
 	d.fontSel = fontSelect(d)
 	d.textSizeSel = textSizeSelect(d)
 	setup.SetScreen(&setup.ScreenChoices{Styles: clockStyleOptions(), Current: clockStyleIndex, Choose: d.setClockStyle,
@@ -628,6 +631,9 @@ func (d *Display) Entities() []esphome.Entity {
 	if liftOffered() {
 		ents = append(ents, d.liftSw)
 	}
+	if boardsOffered() {
+		ents = append(ents, d.idleBoardSel)
+	}
 	return ents
 }
 
@@ -638,6 +644,7 @@ func (d *Display) Restore(c config.Config) {
 	d.roomSw.Set(c.Screen.IgnoreRoomLights)
 	d.describeScreen()
 	d.clockStyleSel.Set(clockStyles[clockStyleIndex()].label)
+	d.idleBoardSel.Set(idleBoardOptions()[idleBoardIndex()])
 	d.fontSel.Set(fonts.Names()[fontIndex()])
 	d.textSizeSel.Set(textSizeOptions()[textSizeIndex()])
 	d.camTime.Set(cameraTimes[cameraTimeIndex()].label)
@@ -917,7 +924,7 @@ func (d *Display) changed(s voice.State) {
 			d.closeAlert()
 			d.sheet, d.quiet = false, true
 			d.dash, d.deckUp = false, false
-			d.boards.up = ""
+			d.boards.up, d.boards.awayUntil = "", time.Time{} // home is the idle board, when there is one
 			go home.Get().HideCamera()
 			go d.endMusic()
 			slog.Info("screen: home by voice")
@@ -943,7 +950,8 @@ func (d *Display) showPage(page string) bool {
 		return true
 	case "calendar":
 		return d.OpenCalendar()
-	case boardWork, boardSky:
+	}
+	if _, ok := boardByID(page); ok {
 		return d.openBoard(page)
 	}
 	return false

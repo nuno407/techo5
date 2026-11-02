@@ -130,6 +130,11 @@ type Screen struct {
 	// "stack" or "overlap" (display/clock_style.go). The night clock keeps its own look.
 	ClockStyle string `json:"clock_style,omitempty"`
 
+	// IdleBoard is the board that stands in for the clock while nothing else is on the screen: empty
+	// for the clock itself, or a board's name, "work" or "sky" (display/boards.go). A name this build
+	// does not know is the clock.
+	IdleBoard string `json:"idle_board,omitempty"`
+
 	// WorldClocks are the World style's places, as time zone names ("Europe/London"); none for its
 	// own three.
 	WorldClocks []string `json:"world_clocks,omitempty"`
@@ -404,6 +409,10 @@ func (w ScreenWriter) TextSize(v int) error {
 
 func (w ScreenWriter) ClockStyle(v string) error {
 	return w.st.Update(func(c *Config) { c.Screen.ClockStyle = v })
+}
+
+func (w ScreenWriter) IdleBoard(v string) error {
+	return w.st.Update(func(c *Config) { c.Screen.IdleBoard = v })
 }
 
 func (w ScreenWriter) WorldClocks(v []string) error {

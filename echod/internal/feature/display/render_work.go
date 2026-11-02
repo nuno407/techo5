@@ -59,18 +59,7 @@ func (p *paint) workColumns(top, h int) [3]image.Rectangle {
 // workColumnAt is the column under x on a screen w wide.
 func workColumnAt(w, x int) int { return min(max(x*3/max(w, 1), 0), 2) }
 
-// boardPage draws the board up.
-func (r *renderer) boardPage(s scene) {
-	var zones []boardZone
-	if s.board.name == boardSky {
-		zones = r.skyPage(s)
-	} else {
-		zones = r.workPage(s)
-	}
-	setBoardZones(zones)
-}
-
-// boardBar is the top bar: the Work and Sky tabs at the left, what the board says about itself beside
+// boardBar is the top bar: a tab for each board at the left, what the board says about itself beside
 // them, the time and the × at the right. On the map (shaded) it is a dark band the map shows through.
 func (r *renderer) boardBar(s scene, summary string, hot bool, shaded bool) []boardZone {
 	fc := r.faces()
@@ -80,14 +69,14 @@ func (r *renderer) boardBar(s scene, summary string, hot bool, shaded bool) []bo
 	}
 	var zones []boardZone
 
-	// Work | Sky, the board up raised, as the drawer's tabs are.
-	seg := image.Rect(r.s(boardIn), r.s(8), r.s(boardIn)+r.s(240), barH-r.s(8))
+	// Work | Sky (the boards registered, boards.go), the board up raised, as the drawer's tabs are.
+	half := r.s(120)
+	seg := image.Rect(r.s(boardIn), r.s(8), r.s(boardIn)+len(boardKinds)*half, barH-r.s(8))
 	segRad := float64(seg.Dy()) / 2
 	r.roundFill(seg, segRad, surface(1), surface(1))
 	r.roundStroke(seg, segRad, r.sf(1), ember)
-	half := seg.Dx() / 2
 	inset := r.s(4)
-	for i, tab := range []struct{ id, label string }{{boardWork, "Work"}, {boardSky, "Sky"}} {
+	for i, tab := range boardKinds {
 		b := image.Rect(seg.Min.X+i*half+inset, seg.Min.Y+inset, seg.Min.X+(i+1)*half-inset, seg.Max.Y-inset)
 		fg, face := lerp(dim, cream, 0.3), fc.nav
 		if tab.id == s.board.name {
@@ -126,7 +115,7 @@ func (r *renderer) boardBar(s scene, summary string, hot bool, shaded bool) []bo
 }
 
 func (r *renderer) workPage(s scene) []boardZone {
-	v := s.board.work
+	v := workView(s)
 	summary := "Nothing waiting on you"
 	switch {
 	case v.Hot == 1:
