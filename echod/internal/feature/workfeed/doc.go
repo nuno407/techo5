@@ -3,8 +3,8 @@
 // screen (display's render_work.go and render_agenda.go) as one View.
 //
 // Each source is polled on its own clock, slowly: GitHub every two minutes (its notifications say how
-// often they may be asked, X-Poll-Interval, and a 304 for nothing new costs nothing), Slack and Jira
-// every three. While nobody has looked at the board for a quarter of an hour they are polled four times
+// often they may be asked, X-Poll-Interval, and a 304 for nothing new costs nothing), Slack every
+// three and Jira every five. While nobody has looked at the board for a quarter of an hour they are polled four times
 // less often, so a board left alone is not the account's busiest client. What came last is kept: a
 // failed poll leaves the items up with a word about the problem, and the board opens on what was there
 // rather than on a spinner.

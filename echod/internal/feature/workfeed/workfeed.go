@@ -94,7 +94,7 @@ type View struct {
 const (
 	githubEvery = 2 * time.Minute
 	slackEvery  = 3 * time.Minute
-	jiraEvery   = 3 * time.Minute
+	jiraEvery   = 5 * time.Minute
 	idleFactor  = 4
 	lookedFor   = 15 * time.Minute
 	// pollTimeout bounds one source's poll, Slack's walk through its direct messages included.
